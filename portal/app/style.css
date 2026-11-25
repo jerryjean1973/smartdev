@@ -321,3 +321,6 @@ body { margin: 0; }
 .wb-task-lanes li + li { margin-top: 6px; }
 .wb-task-lanes button { width: 100%; text-align: left; overflow-wrap: anywhere; }
 .wb-task-board dd { margin: 0 0 8px; white-space: pre-wrap; }
+
+.wb-kanban-preview { max-width: 1400px; margin: 0 auto; padding: 1rem; }
+.wb-kanban-preview > header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }

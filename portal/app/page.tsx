@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import Workbench from './workbench';
+import TaskBoard, { type BoardTask } from './task-board';
 
 type Project = {
   id: string;
@@ -31,6 +32,35 @@ async function request(path: string, method = 'GET', body?: object) {
 async function failure(response: Response) {
   const result = await response.json().catch(() => ({}));
   return typeof result.detail === 'string' ? result.detail : `Request failed (HTTP ${response.status})`;
+}
+
+function DevKanban({project, signOut}: {project: Project; signOut: React.ReactNode}) {
+  const [tasks, setTasks] = useState<BoardTask[]>();
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let active = true;
+    async function refresh() {
+      try {
+        const response = await request('/projects/' + project.id + '/objectives');
+        if (!response.ok) {
+          if ([401, 403, 404].includes(response.status) && active) setTasks(undefined);
+          throw new Error(await failure(response));
+        }
+        const rows: BoardTask[] = await response.json();
+        if (active) { setTasks(rows); setError(''); }
+      } catch (cause) {
+        if (active) setError(cause instanceof Error ? cause.message : 'Task status is unavailable.');
+      }
+    }
+    void refresh();
+    const timer = setInterval(refresh, 4000);
+    return () => { active = false; clearInterval(timer); };
+  }, [project.id]);
+
+  return <main className="wb-kanban-preview">
+    <header><h1>{project.name}</h1>{signOut}</header>
+    <TaskBoard projectId={project.id} tasks={tasks} error={error} />
+  </main>;
 }
 
 export default function Portal() {
@@ -144,6 +174,12 @@ export default function Portal() {
     const response = await request('/logout', 'POST');
     if (!response.ok) throw new Error(await failure(response));
   })}>Sign out</button>;
+
+  if (signedIn && process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH) {
+    const project = projects?.[0];
+    return project ? <DevKanban key={project.id} project={project} signOut={signOut} />
+      : <main><p role="alert">SmartDev DEV is unavailable.</p>{signOut}</main>;
+  }
 
   if (signedIn) return <>
     {error && <p role="alert" className="error">{error}</p>}
