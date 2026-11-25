@@ -1,7 +1,10 @@
 import type { ReactNode } from 'react';
 import './style.css';
 
-export const metadata = { title: 'Development Command Center' };
+export const metadata = {
+  title: 'Development Command Center',
+  description: 'SmartDev development workspace',
+};
 
 export default function Layout({ children }: { children: ReactNode }) {
   return <html lang="en"><body>{children}</body></html>;

@@ -1,0 +1,5 @@
+{
+  "directory": "portal",
+  "command": ["npm", "run", "start"],
+  "preserveBasePath": true
+}
