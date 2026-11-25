@@ -14,8 +14,18 @@ async function proxy(request: NextRequest, context: {params: Promise<{path: stri
     ['projects', 'task-navigation', 'projects/' + project + '/objectives'].includes(path);
   const session = request.method === 'POST' && ['login', 'logout'].includes(path);
   if (!read && !session) return new NextResponse(null, {status: 404});
-  if (session && request.headers.get('origin') !== coderOrigin)
-    return new NextResponse(null, {status: 403});
+  if (session) {
+    const browserOrigin = request.headers.get('origin');
+    const localHost = request.headers.get('host') || '';
+    // The existing preview proxy rewrites same-origin requests to its local app address.
+    const proxiedSameOrigin = /^127\.0\.0\.1:[0-9]+$/.test(localHost)
+      && browserOrigin === 'http://' + localHost
+      && request.headers.get('x-forwarded-host') === new URL(coderOrigin).host
+      && request.headers.get('x-forwarded-prefix') === previewPath
+      && request.headers.get('sec-fetch-site') === 'same-origin';
+    if (browserOrigin !== coderOrigin && !proxiedSameOrigin)
+      return new NextResponse(null, {status: 403});
+  }
 
   const headers = new Headers();
   const token = request.cookies.get(cookieName)?.value;
