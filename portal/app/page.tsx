@@ -22,7 +22,7 @@ const statusLabels = {
 };
 
 async function request(path: string, method = 'GET', body?: object) {
-  return fetch('/api' + path, {
+  return fetch((process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH || '') + '/api' + path, {
     method,
     ...(body ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}),
   });

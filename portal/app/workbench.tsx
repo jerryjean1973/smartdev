@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useRef, useState, type ReactNode, type PointerEvent } from 'react';
-import { Ellipsis, ExternalLink, GitBranch, Globe, List, RotateCw, Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus, Settings } from 'lucide-react';
+import { Ellipsis, ExternalLink, GitBranch, Globe, List, Columns3, RotateCw, Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus, Settings } from 'lucide-react';
 import Memory from './memory';
 import Objectives from './objectives';
+import TaskBoard, { type BoardTask } from './task-board';
 import Runtime from './runtime';
 import DevPublishing from './dev-publishing';
 import ProjectDomains from './project-domains';
@@ -13,15 +14,15 @@ import Secrets from './secrets';
 
 type Project = { id: string; name: string; repository: string; status: string; workspace_url: string | null; error: string | null; archived: boolean };
 type Run = { agent: string; branch: string; worktree: string };
-type Objective = { id: string; display_name?: string; expected_outcome: string; original_request: string; status: string; progress: {
-  executionSteps?: Array<Run & {id:string; criterion_id:string; started_at:string; finished_at:string|null; exit_code:number|null}>;
-  active: Run[]; completedCriteria: string[]; outstandingCriteria: string[]; nextAction: string | null;
-  blockedCriteria: string[]; attempts: {branch: string; worktree: string; exit_code: number | null; started_at: string; finished_at: string | null}[];
+type Objective = BoardTask & { progress: BoardTask['progress'] & {
+  active: Run[];
+  attempts: {branch: string; worktree: string; exit_code: number | null; started_at: string; finished_at: string | null}[];
 } };
-type Preferences = { left: number; command: number; right: number; showLeft: boolean; showCommand: boolean; showRight: boolean; collapsed?: string[]; expandedProjects?: string[]; hidePreview?: boolean; view: 'Preview' | 'Git' | 'Logs' | 'Project settings' | 'Project context' | 'Publishing' | 'Domains'; dark: boolean; project: string };
-const initial = {left: 188, command: 372, right: 420, showLeft: true, showCommand: true, showRight: false, view: 'Preview' as const, dark: true, project: ''};
+const emptyObjectives: Objective[] = [];
+type Preferences = { left: number; command: number; right: number; showLeft: boolean; showCommand: boolean; showRight: boolean; collapsed?: string[]; expandedProjects?: string[]; hidePreview?: boolean; view: 'Preview' | 'Kanban' | 'Git' | 'Logs' | 'Project settings' | 'Project context' | 'Publishing' | 'Domains'; dark: boolean; project: string };
+const initial = {left: 188, command: 372, right: 420, showLeft: true, showCommand: true, showRight: false, view: (process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH ? 'Kanban' : 'Preview') as Preferences['view'], dark: true, project: ''};
 const workspaceTabs = [
-  ['Preview', Globe], ['Git', GitBranch], ['Logs', List],
+  ['Preview', Globe], ['Git', GitBranch], ['Logs', List], ['Kanban', Columns3],
 ] as const;
 type SidebarTask = {id:string; project_id:string; title:string|null; status:string};
 type ChatNavigationCommand = {project:string;type:'focus-task'|'new-task';id?:string};
@@ -57,7 +58,7 @@ export default function Workbench({projects, createForm, signOut, updateProject}
     return () => query.removeEventListener('change', update);
   }, []);
   const pendingNavigation = useRef<ChatNavigationCommand | undefined>(undefined);
-  const [objectives, setObjectives] = useState<Objective[]>([]);
+  const [taskFeed, setTaskFeed] = useState<{project: string; rows?: Objective[]; error?: string}>();
   const [fileView, setFileView] = useState<'files'|'history'>('files');
   const [parents, setParents] = useState<Record<string,string>>({});
   const [showIntegrations, setShowIntegrations] = useState(false);
@@ -82,7 +83,7 @@ export default function Workbench({projects, createForm, signOut, updateProject}
   const expandedProjects = prefs.expandedProjects ?? (selected && !prefs.collapsed?.includes(selected.id) ? [selected.id] : []);
   useEffect(()=>{
     let mounted=true;
-    const load=()=>void fetch('/api/task-navigation',{cache:'no-store'}).then(async response=>{
+    const load=()=>void fetch((process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH || '') + '/api/task-navigation',{cache:'no-store'}).then(async response=>{
       if (!response.ok) return;
       const rows:SidebarTask[]=await response.json();
       if (mounted) setSidebarTasks(rows);
@@ -91,6 +92,8 @@ export default function Workbench({projects, createForm, signOut, updateProject}
     const timer=setInterval(load,3000);
     return ()=>{mounted=false;clearInterval(timer);};
   },[]);
+  const selectedFeed = taskFeed?.project === selected?.id ? taskFeed : undefined;
+  const objectives = selectedFeed?.rows ?? emptyObjectives;
   const active = objectives.flatMap(objective => objective.progress.active);
   const workspace = selected?.workspace_url;
   const editor = workspace ? workspace.replace(/\/$/, '') + '/apps/editor/' : null;
@@ -126,7 +129,7 @@ export default function Workbench({projects, createForm, signOut, updateProject}
     if (!selected || restartingPreview) return;
     setRestartingPreview(true);
     try {
-      const response=await fetch('/api/projects/'+selected.id+'/dev-publishing',{
+      const response=await fetch((process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH || '') + '/api/projects/'+selected.id+'/dev-publishing',{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'restart'}),
       });
       if (!response.ok) throw Error((await response.json()).detail || 'Preview restart failed.');
@@ -139,7 +142,7 @@ export default function Workbench({projects, createForm, signOut, updateProject}
   useEffect(()=>{
     if (!selectedProjectId) return;
     const request=new AbortController();
-    void fetch('/api/projects/'+selectedProjectId+'/preview',{signal:request.signal,cache:'no-store'}).then(async response=>{
+    void fetch((process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH || '') + '/api/projects/'+selectedProjectId+'/preview',{signal:request.signal,cache:'no-store'}).then(async response=>{
       if (!response.ok) throw Error('Preview configuration could not be loaded.');
       const settings=await response.json() as PreviewSettings;
       if (!request.signal.aborted) setPreviewConfig({project:selectedProjectId,settings});
@@ -183,7 +186,7 @@ export default function Workbench({projects, createForm, signOut, updateProject}
         view: current && ['Preview','Git','Logs','Project settings','Project context','Publishing','Domains'].includes(saved.view) ? saved.view : 'Preview',
         dark: saved.dark ?? true});
     } catch {}
-    void fetch('/api/account/project-selection',{cache:'no-store',signal:AbortSignal.timeout(3500)}).then(async response=>{
+    void fetch((process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH || '') + '/api/account/project-selection',{cache:'no-store',signal:AbortSignal.timeout(3500)}).then(async response=>{
       if (!response.ok) return;
       const {id}=await response.json();
       if (typeof id==='string' && !selectionTouched.current) setPrefs(current=>({...current,project:id}));
@@ -196,7 +199,7 @@ export default function Workbench({projects, createForm, signOut, updateProject}
   async function connectCoder() {
     setCoderConnection('connecting');
     try {
-      const response = await fetch('/api/coder-session', {method: 'POST', cache: 'no-store'});
+      const response = await fetch((process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH || '') + '/api/coder-session', {method: 'POST', cache: 'no-store'});
       if (!response.ok) throw new Error('Coder handoff is unavailable.');
       const {endpoint, grant} = await response.json();
       const exchange = await fetch(endpoint, {
@@ -213,13 +216,13 @@ export default function Workbench({projects, createForm, signOut, updateProject}
   useEffect(() => {
     if (!selected?.id) return;
     let closed = false;
-    setObjectives([]);
+    setTaskFeed(undefined);
     setFailure('');
     setDevelopment({status: '', editor_ready: false});
     setRuntimeError('');
     async function runtime() {
       try {
-        const response = await fetch('/api/projects/' + selected.id + '/development');
+        const response = await fetch((process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH || '') + '/api/projects/' + selected.id + '/development');
         const result = await response.json();
         if (!response.ok) throw new Error(result.detail || 'Workspace status is unavailable.');
         if (!closed) setDevelopment(result);
@@ -232,7 +235,7 @@ export default function Workbench({projects, createForm, signOut, updateProject}
     const project=selected.id;
     async function publishing() {
       try {
-        const response=await fetch('/api/projects/'+project+'/dev-publishing',{cache:'no-store'});
+        const response=await fetch((process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH || '') + '/api/projects/'+project+'/dev-publishing',{cache:'no-store'});
         if (!response.ok) throw Error();
         if (!closed) setPublication({...(await response.json()),project});
       } catch { if (!closed) setPublication(undefined); }
@@ -240,13 +243,19 @@ export default function Workbench({projects, createForm, signOut, updateProject}
     void publishing();
     const publishingTimer=setInterval(publishing,5000);
     async function refresh() {
+      let accessLost = false;
       try {
-        const response = await fetch('/api/projects/' + selected.id + '/objectives');
+        const response = await fetch((process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH || '') + '/api/projects/' + project + '/objectives', {cache: 'no-store'});
+        accessLost = [401, 403, 404].includes(response.status);
         if (!response.ok) throw new Error('Task status is unavailable.');
         const rows: Objective[] = await response.json();
-        if (!closed) { setObjectives(rows); setFailure(''); }
+        if (!closed) { setTaskFeed({project, rows}); setFailure(''); }
       } catch {
-        if (!closed) setFailure('Task status is unavailable.');
+        if (!closed) {
+          const error = 'Task status is unavailable.';
+          setTaskFeed(current => ({project, rows: !accessLost && current?.project === project ? current.rows : undefined, error}));
+          setFailure(error);
+        }
       }
     }
     void refresh();
@@ -358,7 +367,7 @@ export default function Workbench({projects, createForm, signOut, updateProject}
       expandedProjects: current.expandedProjects ?? expandedProjects}));
     setShowTaskDetails(false);
     setMenu('');
-    void fetch('/api/account/project-selection/'+project.id,{method:'PUT'}).catch(()=>{});
+    void fetch((process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH || '') + '/api/account/project-selection/'+project.id,{method:'PUT'}).catch(()=>{});
     setCreating(false);
   }
   async function lifecycle(action: 'start' | 'stop') {
@@ -366,7 +375,7 @@ export default function Workbench({projects, createForm, signOut, updateProject}
     setWorking(true);
     setRuntimeError('');
     try {
-      const response = await fetch('/api/projects/' + selected.id + '/development', {
+      const response = await fetch((process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH || '') + '/api/projects/' + selected.id + '/development', {
         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action}),
       });
       const result = await response.json();
@@ -444,13 +453,15 @@ export default function Workbench({projects, createForm, signOut, updateProject}
     const name = window.prompt('Task name', task.title || 'Project development task')?.trim();
     if (!name) return;
     try {
-      const response = await fetch('/api/projects/' + task.project_id + '/objectives/' + task.id + '/display-name', {
+      const response = await fetch((process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH || '') + '/api/projects/' + task.project_id + '/objectives/' + task.id + '/display-name', {
         method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name}),
       });
       const result=await response.json();
       if (!response.ok) throw Error(typeof result.detail==='string'?result.detail:'Could not rename task.');
       setSidebarTasks(rows => rows.map(row => row.id === task.id ? {...row, title:result.display_name} : row));
-      setObjectives(rows => rows.map(row => row.id === task.id ? {...row, display_name:result.display_name} : row));
+      setTaskFeed(current => current?.project === task.project_id && current.rows
+        ? {...current, rows: current.rows.map(row => row.id === task.id ? {...row, display_name:result.display_name} : row)}
+        : current);
     } catch (error) { setFailure(error instanceof Error ? error.message : 'Could not rename task.'); }
   }
 
@@ -632,6 +643,9 @@ export default function Workbench({projects, createForm, signOut, updateProject}
             <span>{expandedView === 'preview' ? 'Restore layout' : 'Expand'}</span>
           </button>
         </div>
+          {prefs.view === 'Kanban' && (selected
+            ? <TaskBoard key={selected.id} projectId={selected.id} tasks={selectedFeed?.rows} error={selectedFeed?.error} />
+            : <div className="wb-content"><p>Select a project to view tasks.</p></div>)}
           {prefs.view === 'Preview' && selected && <div className="wb-preview">
             <div className="wb-preview-toolbar" role="group" aria-label="Preview browser controls">
               <div className="wb-preview-environment">

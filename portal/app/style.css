@@ -314,3 +314,10 @@ body { margin: 0; }
 }
 
 .wb-divider:not(:hover):not(:focus-visible) { background:linear-gradient(to right, transparent calc(50% - .5px), var(--line) calc(50% - .5px) calc(50% + .5px), transparent calc(50% + .5px)); }
+
+.wb-task-board { flex: 1; min-height: 0; overflow: auto; padding: 12px; overflow-wrap: anywhere; }
+.wb-task-lanes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 8px; }
+.wb-task-lanes ul { list-style: none; margin: 0; padding: 0; }
+.wb-task-lanes li + li { margin-top: 6px; }
+.wb-task-lanes button { width: 100%; text-align: left; overflow-wrap: anywhere; }
+.wb-task-board dd { margin: 0 0 8px; white-space: pre-wrap; }
