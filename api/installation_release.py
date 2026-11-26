@@ -28,6 +28,8 @@ def installation_plan(project_id, zone, release):
             or any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
                    for label in labels)):
         raise ValueError("Invalid installation DNS zone")
+    if release.get("release_profile") != "smd-host":
+        raise ValueError("Signed release must identify a standalone SMD host artifact")
     images = release["images"]
     if set(images) != SERVICES or any(not IMAGE.fullmatch(image) for image in images.values()):
         raise ValueError("Every installation service needs a digest-pinned image")
@@ -37,6 +39,7 @@ def installation_plan(project_id, zone, release):
     host = f"sd-{root}"
     return {
         "project_id": root,
+        "release_profile": release["release_profile"],
         "host_id": host,
         "portal_origin": f"https://{host}.{zone}",
         "coder_origin": f"https://coder-{root}.{zone}",

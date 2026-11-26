@@ -6,7 +6,7 @@ from pathlib import Path
 from uuid import UUID
 
 from installation_compose import compose
-from installation_release import verify, verify_operation
+from installation_release import verify, verify_operation, verified_installation_plan
 
 
 def main():
@@ -24,7 +24,10 @@ def main():
                      plan, str(args.enrollment_id), None)
     if plan["destination"]["kind"] != "docker" or handoff["grant"]["operation"] != "install":
         raise ValueError("Expected an install grant for Docker")
-    if (plan["images"] != release["images"]
+    zone = plan["portal_origin"].split(".", 1)[1]
+    expected = verified_installation_plan(plan["project_id"], zone, release,
+                                          handoff["release_signature"], args.release_public_key)
+    if (any(plan.get(key) != value for key, value in expected.items())
             or compose(plan) != json.loads((root / "compose.json").read_text())):
         raise ValueError("Compose does not match the signed release and plan")
     for artifact, filename in (("installer", "installer.sh"), ("coder_template", "coder-template.tar")):

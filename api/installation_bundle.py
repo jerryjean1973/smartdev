@@ -40,7 +40,9 @@ installed from your trusted package source. Before executing the installer, run:
 
 Use the existing enrolled installer to initialize the services. Create credentials
 locally, restrict file permissions, initialize and unseal OpenBao, and supply
-a scoped vault token. Use the example files as templates. Point customer TLS
+a scoped vault token. Use the example files as templates and set
+SMD_CREDENTIALS_DIR to the absolute path of the host-local credentials directory.
+Point customer TLS
 ingress to the portal and route /api to the API with that prefix stripped.
 Keep Postgres, Redis and the vault on private networks.
 
