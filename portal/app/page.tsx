@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import Workbench from './workbench';
+import HostInstallations from './host-installations';
 import TaskBoard, { type BoardTask } from './task-board';
 
 type Project = {
@@ -183,6 +184,7 @@ export default function Portal() {
 
   if (signedIn) return <>
     {error && <p role="alert" className="error">{error}</p>}
+    <HostInstallations />
     <Workbench projects={projects ?? []} signOut={signOut}
       updateProject={(project, verb) => updateProject(project.id, project.name, verb)}
       createForm={(

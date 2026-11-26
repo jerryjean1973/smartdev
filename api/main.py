@@ -87,7 +87,8 @@ async def protect(request: Request, call_next):
         return response
     if request.method == "POST" and request.url.path in {
         "/operator-machine/poll", "/operator-machine/result",
-        "/operator-machine/task-poll", "/operator-machine/task-result"
+        "/operator-machine/task-poll", "/operator-machine/task-result",
+        "/operator-machine/install-poll", "/operator-machine/install-result"
     }:
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
@@ -252,6 +253,7 @@ app.include_router(external_mcp_grants_router)
 from external_mcp_transport import router as external_mcp_transport_router
 app.include_router(external_mcp_transport_router)
 import operator_task  # Register task routes on the existing operator router.
+import host_installation  # Register lifecycle routes on the same operator router.
 from operator_dispatch import router as operator_dispatch_router
 app.include_router(operator_dispatch_router)
 from external_mcp_oauth_routes import router as external_mcp_oauth_router
