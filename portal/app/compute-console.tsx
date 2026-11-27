@@ -34,8 +34,9 @@ import {
 } from 'lucide-react';
 import s from './compute-console.module.css';
 import DeploymentLogin from './deployment-login';
+import { DockerDownload, type DockerExport, type DownloadProject } from './docker-download';
 
-type Tenant = { id: string; name: string };
+type Tenant = { id: string; name: string; is_default: boolean };
 type App = {
   project_id: string;
   url: string;
@@ -229,10 +230,9 @@ function Assign({
         <label>
           Assigned tenant
           <select value={tenant} onChange={(e) => setTenant(e.target.value)}>
-            <option value="">Unassigned</option>
             {tenants.map((t) => (
               <option key={t.id} value={t.id}>
-                {t.name}
+                {t.name}{t.is_default ? ' (default)' : ''}
               </option>
             ))}
           </select>
@@ -554,10 +554,14 @@ const mainLinks = [
   { label: 'Settings', href: '/?view=settings', icon: Settings },
 ];
 export default function ComputeConsole({
+  projects,
+  dockerExport,
   deploymentForm,
   signOut,
   onAsk,
 }: {
+  projects: DownloadProject[];
+  dockerExport?: DockerExport;
   deploymentForm: ReactNode;
   signOut?: ReactNode;
   onAsk?: () => void;
@@ -574,11 +578,12 @@ export default function ComputeConsole({
   const [selected, setSelected] = useState<string>(),
     [tab, setTab] = useState<Tab>('Overview'),
     [reverse, setReverse] = useState(false);
-  const [screen, setScreen] = useState<'Deployments' | 'Instances' | 'Images' | 'Environments'>(() =>
-    typeof window !== 'undefined' &&
-    new URLSearchParams(window.location.search).get('view') === 'environments'
-      ? 'Environments'
-      : 'Deployments',
+  const [screen, setScreen] = useState<'Deployments' | 'Instances' | 'Images' | 'Environments'>(() => {
+    const view = typeof window === 'undefined' ? '' : new URLSearchParams(window.location.search).get('view');
+    return view === 'images' ? 'Images' : view === 'environments' ? 'Environments' : 'Deployments';
+  });
+  const [downloadProjectId, setDownloadProjectId] = useState(() =>
+    typeof window === 'undefined' ? '' : new URLSearchParams(window.location.search).get('project') || '',
   );
   const [menu, setMenu] = useState(''),
     [mobileNav, setMobileNav] = useState(false),
@@ -681,6 +686,8 @@ export default function ComputeConsole({
       (a, b) => (reverse ? 1 : -1) * (a.updated_at.localeCompare(b.updated_at) || a.id.localeCompare(b.id)),
     );
   const active = rows.find((j) => j.id === selected) || rows[0];
+  const downloadProject = projects.find((p) => p.id === downloadProjectId) || projects.find((p) => p.id === active?.project_id) || projects[0];
+  const defaultTenant = tenants.find((tenant) => tenant.is_default);
   const activeId = active?.id,
     updated = active?.updated_at,
     assignmentVersion = active?.assignment_version;
@@ -728,6 +735,7 @@ export default function ComputeConsole({
     setMobileNav(false);
   }
   function actionItems(job: Job) {
+    const project = projects.find((item) => item.id === job.project_id);
     return (
       <>
         <button onClick={() => select(job, 'Access', true)}>
@@ -736,6 +744,7 @@ export default function ComputeConsole({
         <button onClick={() => select(job, 'Receipts', true)}>
           <FileCheck2 size={15} /> View receipt
         </button>
+        {project && <DockerDownload project={project} bundle={dockerExport} />}
         <button
           onClick={() => {
             setMenu('');
@@ -1031,6 +1040,23 @@ export default function ComputeConsole({
               {error} <button onClick={() => void refresh()}>Retry</button>
             </p>
           )}
+          {screen === 'Images' && (
+            <section className={s.downloads} aria-label="Project downloads">
+              <div>
+                <h2>Project downloads</h2>
+                <small>SmartDev platform · Docker Compose archive{dockerExport?.available &&
+                  ' · ' + dockerExport.revision + ' · ' + (dockerExport.size_bytes / 1e9).toFixed(2) + ' GB'}</small>
+              </div>
+              {downloadProject ? <>
+                <label>Project
+                  <select value={downloadProject.id} onChange={(e) => setDownloadProjectId(e.target.value)}>
+                    {projects.map((p) => <option value={p.id} key={p.id}>{p.name}</option>)}
+                  </select>
+                </label>
+                <DockerDownload project={downloadProject} bundle={dockerExport} />
+              </> : <small>No active projects</small>}
+            </section>
+          )}
           <section className={s.inventory} aria-label="Deployment inventory">
             <div className={s.panelTitle}>
               <h2>
@@ -1218,6 +1244,7 @@ export default function ComputeConsole({
       )}
       {newJob && (
         <Modal title="New deployment" onClose={() => setNewJob(false)}>
+          {defaultTenant && <p className={s.defaultOwner}>Assigned tenant · <strong>{defaultTenant.name}</strong> (default)</p>}
           {deploymentForm}
         </Modal>
       )}

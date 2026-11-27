@@ -12,7 +12,8 @@ type Project = {
 };
 
 import ComputeConsole from './compute-console';
-import {Download, Rocket, Server} from 'lucide-react';
+import { DockerDownload, type DockerExport } from './docker-download';
+import {Rocket, Server} from 'lucide-react';
 import styles from './deployment-console.module.css';
 
 const endpoint = '/api/admin/project-tenants';
@@ -27,14 +28,16 @@ type Offer = {
   projects: {id: string; name: string; repository: string; revision: string}[];
 };
 
-export default function AdminProjects<T extends Project>({projects, activeTab, signOut, onAsk}: {
+export default function AdminProjects<T extends Project>({projects, activeTab, signOut, onAsk, dockerExport}: {
   projects: T[];
+  dockerExport?: DockerExport;
   activeTab?: 'deployments' | 'tenants';
   signOut?: ReactNode; onAsk?:()=>void;
 }) {
   const [localTab, setTab] = useState<'deployments' | 'tenants'>('deployments');
   const tab = activeTab ?? localTab;
   const [assignments, setAssignments] = useState<Record<string, string>>();
+  const [catalog, setCatalog] = useState<{name: string; is_default: boolean}[]>([]);
   const [tenant, setTenant] = useState('');
   const [targetOverride, setTargetOverride] = useState<string | null>(null);
   const [deploymentProjectIds, setDeploymentProjectIds] = useState<string[]>([]);
@@ -62,8 +65,26 @@ export default function AdminProjects<T extends Project>({projects, activeTab, s
     return () => controller.abort();
   }, []);
 
+  useEffect(() => {
+    if (tab !== 'tenants') return;
+    const controller = new AbortController();
+    async function loadCatalog() {
+      try {
+        const response = await fetch('/api/admin/tenants', {cache: 'no-store', signal: controller.signal});
+        if (!response.ok) throw Error();
+        setCatalog(await response.json());
+      } catch {
+        if (!controller.signal.aborted) setMessage('Tenant catalog is unavailable.');
+      }
+    }
+    void loadCatalog();
+    return () => controller.abort();
+  }, [tab]);
+
   const ordered = [...projects].sort((a, b) => a.name.localeCompare(b.name));
   const tenants = [...new Set(Object.values(assignments ?? {}))].sort((a, b) => a.localeCompare(b));
+  const defaultTenant = catalog.find(item => item.is_default);
+  const tenantNames = [...new Set([...catalog.map(item => item.name), ...tenants])].sort((a, b) => a.localeCompare(b));
   const visible = ordered.filter(project => !tenant || assignments?.[project.id] === tenant);
 
   const deployable = ordered.filter(project => !project.archived);
@@ -152,10 +173,10 @@ export default function AdminProjects<T extends Project>({projects, activeTab, s
       <header className={styles.header}>
         <div className={styles.title}><Server size={19} aria-hidden /><h2 id="deployment-console-title">Deployment configuration</h2></div>
         <div className={styles.targetActions}>
-          <label className={styles.picker}>Target tenant
+          <label className={styles.picker}>Project tenant
             <select value={target} disabled={!assignments || !selected.length}
               onChange={event => setTargetOverride(event.target.value === currentTarget ? null : event.target.value)}>
-              <option value="">{selectedTenants.size > 1 ? 'Multiple current tenants' : 'Current · Unassigned'}</option>
+              <option value="">{selectedTenants.size > 1 ? 'Multiple current tenants' : 'No project tenant'}</option>
               {tenants.map(value => <option key={value} value={value}>{value === currentTarget ? value + ' · Current' : value}</option>)}
             </select>
           </label>
@@ -174,7 +195,7 @@ export default function AdminProjects<T extends Project>({projects, activeTab, s
                 setTargetOverride(null);
                 setDeploymentProjectIds(event.target.checked ? deployable.map(project => project.id) : []);
               }} /></th>
-            <th scope="col">Project</th><th scope="col">Git commit</th><th scope="col">Tenant</th><th scope="col">Workspace</th>
+            <th scope="col">Project</th><th scope="col">Git commit</th><th scope="col">Project tenant</th><th scope="col">Workspace</th>
           </tr></thead>
           <tbody>{visible.map(project => {
             const included = deploymentProjectIds.includes(project.id) && !project.archived;
@@ -187,11 +208,7 @@ export default function AdminProjects<T extends Project>({projects, activeTab, s
                 setDeploymentProjectIds(ids => checked ? [...ids, project.id] : ids.filter(id => id !== project.id));
               }} /></td>
             <th scope="row"><span className={styles.projectName}>
-              {project.name}{project.archived ? <small> · Archived</small> : <a
-                aria-label={'Download SMD stack for ' + project.name} title="Download SMD stack (Docker Compose)"
-                href={'/api/admin/projects/' + project.id + '/smd-export'} download>
-                <Download size={16} aria-hidden />
-              </a>}
+              {project.name}{project.archived ? <small> · Archived</small> : <DockerDownload project={project} bundle={dockerExport} />}
             </span></th>
             <td>
               <input aria-label={'Git commit for ' + project.name} value={revisions[project.id] ?? ''}
@@ -239,19 +256,20 @@ export default function AdminProjects<T extends Project>({projects, activeTab, s
         onClick={() => setTab('tenants')}>Tenants</button>
     </div>}
     <div id="admin-panel-deployments" role="tabpanel" aria-label={activeTab ? "Deployments" : undefined} aria-labelledby={activeTab ? undefined : "admin-tab-deployments"} hidden={tab !== 'deployments'}>
-    {tab==='deployments' && <ComputeConsole deploymentForm={deploymentForm} signOut={signOut} onAsk={onAsk}/>}
+    {tab==='deployments' && <ComputeConsole projects={deployable} dockerExport={dockerExport} deploymentForm={deploymentForm} signOut={signOut} onAsk={onAsk}/>}
     </div>
     <div id="admin-panel-tenants" role="tabpanel" aria-label={activeTab ? "Tenants" : undefined} aria-labelledby={activeTab ? undefined : "admin-tab-tenants"} hidden={tab !== 'tenants'}>
     <h2>Tenant administration</h2>
+    {defaultTenant && <p>Default deployment tenant · <strong>{defaultTenant.name}</strong></p>}
     <label>Tenant
       <select value={tenant} onChange={event => setTenant(event.target.value)}>
         <option value="">All tenants</option>
-        {tenants.map(value => <option key={value}>{value}</option>)}
+        {tenantNames.map(value => <option key={value} value={value}>{value}{value === defaultTenant?.name ? ' (default)' : ''}</option>)}
       </select>
     </label>
     <form onSubmit={save}>
       <fieldset disabled={!assignments || saving}>
-        <legend>Assign a tenant</legend>
+        <legend>Assign a project tenant</legend>
         <label>Project
           <select value={projectId} onChange={event => {
             setProjectId(event.target.value);
@@ -262,7 +280,7 @@ export default function AdminProjects<T extends Project>({projects, activeTab, s
           </select>
         </label>
         <label>Tenant name <input list="cc-tenant-names" value={name} maxLength={80} onChange={event => setName(event.target.value)} /></label>
-        <datalist id="cc-tenant-names">{tenants.map(value => <option key={value} value={value} />)}</datalist>
+        <datalist id="cc-tenant-names">{tenantNames.map(value => <option key={value} value={value} />)}</datalist>
         <button disabled={!projectId}>Save assignment</button>
         <button type="button" disabled={!projectId} onClick={() => setName('')}>Clear tenant name</button>
       </fieldset>

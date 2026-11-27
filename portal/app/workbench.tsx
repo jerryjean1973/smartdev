@@ -10,6 +10,7 @@ import Runtime from './runtime';
 import DevPublishing from './dev-publishing';
 import SmdDeployment from './smd-deployment';
 import AdminProjects from './admin-projects';
+import { DockerDownload, useDockerExport } from './docker-download';
 import ProjectDomains from './project-domains';
 import Integrations from './integrations';
 import ApplicationPreviewSettings, {defaultPreview,environments,type Environment,type PreviewSettings} from './preview-settings';
@@ -36,6 +37,7 @@ export default function Workbench({projects, createForm, signOut, updateProject,
   managementOnly?: boolean; codingOnly?: boolean; projects: Project[]; createForm: ReactNode; signOut: ReactNode;
   updateProject: (project: Project, verb: 'retry' | 'archive') => void;
 }) {
+  const dockerExport = useDockerExport();
   const [prefs, setPrefs] = useState<Preferences>(initial);
   const [restored, setRestored] = useState(false);
   const [coderConnection, setCoderConnection] = useState<'connecting' | 'connected' | 'failed'>('connecting');
@@ -96,7 +98,7 @@ export default function Workbench({projects, createForm, signOut, updateProject,
   const [ccConversation, setCcConversation] = useState<{taskId?: string; title: string}>();
   useEffect(() => {
     const view = new URLSearchParams(window.location.search).get('view');
-    if (managementOnly && (!view || view==='deployments' || view==='tenants' || view==='environments')) {
+    if (managementOnly && (!view || view==='deployments' || view==='tenants' || view==='environments' || view==='images')) {
       setShowFleet(false); setShowTaskboard(false); setAdminTab(view==='tenants'?'tenants':'deployments'); setShowAdmin(true);
     }
     if (view === 'taskboard') {
@@ -261,7 +263,7 @@ export default function Workbench({projects, createForm, signOut, updateProject,
   }, []);
   useEffect(() => {
     const view = new URLSearchParams(window.location.search).get('view');
-    if (managementOnly && view && !['deployments', 'environments', 'tenants', 'taskboard'].includes(view)) {
+    if (managementOnly && view && !['deployments', 'environments', 'images', 'tenants', 'taskboard'].includes(view)) {
       void openWorkspaces();
     }
   }, [managementOnly, openWorkspaces]);
@@ -644,7 +646,7 @@ export default function Workbench({projects, createForm, signOut, updateProject,
         }}
         style={{display: 'block', width: '100%', height: 'calc(100dvh - 56px)', border: 0}} />}
     </section>}
-    {showAdmin && <AdminProjects projects={projects} signOut={signOut} onAsk={()=>setCcConversation({title:'Main'})} activeTab={managementOnly ? adminTab : undefined} />}
+    {showAdmin && <AdminProjects dockerExport={dockerExport} projects={projects} signOut={signOut} onAsk={()=>setCcConversation({title:'Main'})} activeTab={managementOnly ? adminTab : undefined} />}
     {showIntegrations && <Integrations projectId={selected?.id} repository={selected?.repository} onClose={() => setShowIntegrations(false)} />}
     {(!managementOnly || showTaskboard) && <div className="wb-grid" hidden={showAdmin} style={{display: showAdmin ? 'none' : undefined, gridTemplateColumns: [
       ...(showProjects ? ['minmax(150px, min(' + prefs.left + 'px, 19vw))', '5px'] : []),
@@ -680,6 +682,7 @@ export default function Workbench({projects, createForm, signOut, updateProject,
                 <button onClick={()=>{choose(project);toggleView('Publishing');}}>Publishing</button>
                 <button onClick={()=>{choose(project);toggleView('Domains');}}>Domains</button>
                 <button onClick={()=>{choose(project);toggleView('Project settings');}}>Project settings</button>
+                <DockerDownload project={project} bundle={dockerExport} />
                 {project.status==='failed' && <button onClick={()=>{setMenu('');updateProject(project,'retry');}}>Retry provisioning</button>}
                 {['created','failed'].includes(project.status) && <button onClick={()=>{setMenu('');updateProject(project,'archive');}}>Archive project</button>}
               </div>}

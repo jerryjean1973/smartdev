@@ -10,6 +10,7 @@ from typing import Literal
 from starlette.concurrency import run_in_threadpool
 from acceptance import fixture_binding
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field, field_validator
 
 from core import REPOSITORY, issue_session, password_digest, project_token, valid_session
@@ -147,6 +148,11 @@ async def protect(request: Request, call_next):
         return JSONResponse({"detail": "Invalid request origin"}, 403)
     if request.url.path not in ("/health", "/login", DEV_GATEWAY_AUTH):
         if not valid_session(request.cookies.get("__Host-command", ""), session_key):
+            if request.method == "GET" and request.headers.get("sec-fetch-mode") == "navigate":
+                download = re.fullmatch(r"/admin/projects/([a-f0-9-]{36})/smd-export", request.url.path)
+                if download:
+                    return RedirectResponse(f"{origin}/?view=images&project={download[1]}", status_code=303,
+                                            headers={"Cache-Control": "no-store"})
             return JSONResponse({"detail": "Sign in required"}, 401)
     response = await call_next(request)
     response.headers["Cache-Control"] = "no-store"

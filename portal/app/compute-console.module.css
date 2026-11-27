@@ -470,6 +470,7 @@
   color: #7852a6;
   border-color: #e6dbf6;
 }
+.downloads,
 .inventory,
 .details {
   background: #fff;
@@ -1256,7 +1257,8 @@
   gap: 6px;
   padding: 12px;
 }
-.actionList button {
+.actionList :is(a, button) {
+  text-decoration: none;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -1313,3 +1315,19 @@
     margin: 0;
   }
 }
+
+.downloads {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 15px 17px;
+  margin-bottom: 14px;
+}
+.downloads > div { flex: 1 1 260px; }
+.downloads h2 { margin: 0 0 3px; font-size: 17px; }
+.downloads small { color: var(--soft); }
+.downloads label, .downloads a { display: inline-flex; align-items: center; gap: 7px; }
+.downloads select { max-width: 100%; }
+.downloads a { font-weight: 600; color: var(--blue); }
+.defaultOwner { margin: 12px 17px 0; }

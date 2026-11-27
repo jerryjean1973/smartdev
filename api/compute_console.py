@@ -21,11 +21,22 @@ INVENTORY = """
 """
 
 
+def tenant_catalog(db):
+    return db.execute("""SELECT id,name,id=smd_admin_tenant_id() AS is_default FROM command_center_tenant
+                         ORDER BY is_default DESC,lower(name),id""").fetchall()
+
+
+@router.get("/admin/tenants")
+def registered_tenants():
+    with database() as db:
+        return tenant_catalog(db)
+
+
 @router.get("/admin/compute/deployments")
 def inventory():
     with database() as db:
         rows = db.execute(INVENTORY + " ORDER BY t.queued_at DESC,t.id").fetchall()
-        tenants = db.execute("SELECT id,name FROM command_center_tenant ORDER BY lower(name),id").fetchall()
+        tenants = tenant_catalog(db)
     # Build metadata belongs to the installer. Only publish the fields displayed by the console.
     for row in rows:
         row["project_manifest"] = [
@@ -100,24 +111,23 @@ def assign(task_id: UUID, body: Assignment):
             raise HTTPException(404, "Deployment unavailable.")
         if current["version"] != body.version:
             raise HTTPException(409, "The assignment changed. Refresh and review it again.")
-        if body.tenant_id == current["tenant_id"]:
-            return current
-        if (
-            body.tenant_id
-            and not db.execute(
-                "SELECT 1 FROM command_center_tenant WHERE id=%s", (body.tenant_id,)
-            ).fetchone()
-        ):
+        # Older clients clear the field to return a deployment to its default owner.
+        tenant = db.execute(
+            "SELECT id FROM command_center_tenant WHERE id=coalesce(%s,smd_admin_tenant_id())", (body.tenant_id,)
+        ).fetchone()
+        if not tenant:
             raise HTTPException(422, "Choose a registered tenant.")
+        if tenant["id"] == current["tenant_id"]:
+            return current
         updated = db.execute(
             """UPDATE smd_deployment_assignment SET tenant_id=%s,version=version+1
                              WHERE task_id=%s RETURNING tenant_id,version""",
-            (body.tenant_id, task_id),
+            (tenant["id"], task_id),
         ).fetchone()
         db.execute(
             """INSERT INTO smd_deployment_event(task_id,kind,label,previous_tenant,next_tenant)
                       VALUES (%s,'assignment','Owner changed tenant assignment',%s,%s)""",
-            (task_id, current["tenant_id"], body.tenant_id),
+            (task_id, current["tenant_id"], tenant["id"]),
         )
     return updated
 

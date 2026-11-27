@@ -305,6 +305,8 @@ body { margin: 0; }
 .wb-tree-row:hover .wb-tree-overflow,.wb-tree-row:focus-within .wb-tree-overflow,.wb-tree-overflow[aria-expanded=true] { opacity:1; }
 .wb-tree-overflow svg,.wb-tree-new svg { width:14px; height:14px; }
 .wb-tree-actions { display:grid; padding-inline-start:7px; }
+.workbench .wb-tree-actions a { display:inline-flex; align-items:center; gap:5px; padding:4px 6px; color:inherit; text-decoration:none; }
+.workbench .wb-tree-actions a:hover { background:var(--field); }
 .workbench .wb-tree-actions button { text-align:left; min-width:0; white-space:normal; padding:4px 6px; }
 @media (max-width:1000px) {
   .wb-side:not([hidden]) { flex:0 1 auto; max-height:28dvh; }

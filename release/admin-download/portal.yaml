@@ -1,0 +1,3 @@
+services:
+  portal:
+    image: smartdev-portal:admin-docker-download-20261127
