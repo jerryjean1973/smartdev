@@ -21,6 +21,7 @@ from development import router as development_router
 from cc_codex import router as cc_codex_router
 from coder_inventory import router as coder_inventory_router
 from smd_deployment import router as smd_deployment_router
+from deployment_portal_access import PUBLIC_POST as PORTAL_PUBLIC_POST, router as deployment_portal_router
 from smd_receipts import router as smd_receipts_router
 from smd_git_tokens import router as smd_git_tokens_router
 from smd_release_assets import ASSET_ROUTE, router as smd_release_assets_router
@@ -70,6 +71,10 @@ def authorize_acceptance_route(project_id, request):
 @app.middleware("http")
 async def protect(request: Request, call_next):
     from starlette.responses import JSONResponse
+    if request.method == "POST" and request.url.path in PORTAL_PUBLIC_POST:
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "no-store"
+        return response
     if request.url.path == "/mcp":
         caller_origin = request.headers.get("origin")
         allowed = {origin, "https://chatgpt.com"}
@@ -296,6 +301,7 @@ app.include_router(cc_codex_router)
 app.include_router(coder_inventory_router)
 app.include_router(smd_deployment_router)
 app.include_router(smd_receipts_router)
+app.include_router(deployment_portal_router)
 app.include_router(smd_git_tokens_router)
 app.include_router(smd_release_assets_router)
 app.include_router(smd_stack_export_router)

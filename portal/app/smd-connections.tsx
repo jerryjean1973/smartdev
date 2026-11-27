@@ -1,6 +1,7 @@
 'use client';
 
 import {useEffect, useState} from 'react';
+import DeploymentLogin from './deployment-login';
 
 type Connections = {
   ipv4: string;
@@ -15,11 +16,13 @@ export default function SmdConnections({taskId, projectNames = {}}: {
   projectNames?: Record<string, string>;
 }) {
   const [connections, setConnections] = useState<Connections>();
+  const [active, setActive] = useState(false);
   const [notice, setNotice] = useState('Loading verified connection details…');
 
   useEffect(() => {
     const controller = new AbortController();
     setConnections(undefined);
+    setActive(false);
     setNotice('Loading verified connection details…');
     async function load() {
       try {
@@ -27,10 +30,11 @@ export default function SmdConnections({taskId, projectNames = {}}: {
           cache: 'no-store', signal: controller.signal,
         });
         if (!response.ok) throw Error();
-        const receipt: {verified: boolean; connections: Connections | null} = await response.json();
+        const receipt: {verified: boolean; active: boolean; connections: Connections | null} = await response.json();
         if (controller.signal.aborted) return;
         if (receipt.verified && receipt.connections) {
           setConnections(receipt.connections);
+          setActive(receipt.active);
         } else {
           setNotice('No verified connection details were recorded for this deployment.');
         }
@@ -49,7 +53,7 @@ export default function SmdConnections({taskId, projectNames = {}}: {
       <dt>VM hostname</dt><dd>{new URL(connections.portal_url).hostname}</dd>
       <dt>Public IP</dt><dd><code>{connections.ipv4}</code></dd>
       <dt>SSH</dt><dd><code>ssh {connections.ssh_user}@{connections.ipv4}</code></dd>
-      <dt>SmartDev</dt><dd><a href={connections.portal_url}>Open SmartDev</a></dd>
+      <dt>SmartDev</dt><dd>{active ? <DeploymentLogin taskId={taskId} portal={connections.portal_url} /> : 'No active portal'}</dd>
       <dt>Coder</dt><dd><a href={connections.coder_url}>Open Coder</a></dd>
     </dl>
     {connections.apps.length > 0 && <>

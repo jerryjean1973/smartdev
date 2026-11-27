@@ -33,6 +33,7 @@ import {
   X,
 } from 'lucide-react';
 import s from './compute-console.module.css';
+import DeploymentLogin from './deployment-login';
 
 type Tenant = { id: string; name: string };
 type App = {
@@ -62,6 +63,7 @@ type Job = {
   installer_sha256: string | null;
   observed_revision: string | null;
   assignment_version: number;
+  portal_account: string;
   tenant_id: string | null;
   tenant_name: string | null;
   enrolled_at: string | null;
@@ -269,7 +271,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
     </div>
   );
 }
-function Connection({ title, url, status }: { title: string; url?: string; status: string }) {
+function Connection({ title, url, status, action }: { title: string; url?: string; status: string; action?: ReactNode }) {
   const verified = url && /^https:\/\//i.test(url);
   return (
     <div className={s.connection}>
@@ -281,7 +283,7 @@ function Connection({ title, url, status }: { title: string; url?: string; statu
         <small>{status}</small>
         {verified && <CopyValue value={url} label={title + ' URL'} />}
       </div>
-      {verified && (
+      {action !== undefined ? action : verified && (
         <a href={url} target="_blank" rel="noreferrer">
           Open {title}
           <ExternalLink size={13} />
@@ -444,7 +446,11 @@ function Details({
             <Connection
               title="SmartDev Portal"
               url={links?.portal_url}
-              status={links ? 'Verified endpoint' : 'No verified endpoint'}
+              status={'Default account · ' + job.portal_account + ' · ' + (
+                job.reconciled_at || job.status !== 'deployed' || !links ? 'No active portal' :
+                'Command Center sign-in'
+              )}
+              action={links && !job.reconciled_at && job.status === 'deployed' ? <DeploymentLogin taskId={job.id} portal={links.portal_url} /> : null}
             />
             <Connection
               title="Coder"

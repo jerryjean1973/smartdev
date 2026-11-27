@@ -10,7 +10,8 @@ INVENTORY = """
  SELECT t.id,t.project_id,p.name AS project_name,t.project_manifest,t.status,t.instance_id,
         t.release_revision,t.queued_at,t.updated_at,t.reconciled_at,t.region,t.plan,t.dns_zone,
         t.deployment_hostname,t.note,t.installer_sha256,t.observed_revision,
-        a.version AS assignment_version,c.id AS tenant_id,c.name AS tenant_name,
+        a.version AS assignment_version,a.portal_account,
+        (a.portal_ready_instance=t.instance_id OR r.connections->>'portal_access'='owner-pkce-v1') IS TRUE AS portal_ready,c.id AS tenant_id,c.name AS tenant_name,
         r.enrolled_at,r.verified_at,
         CASE WHEN r.verified_at IS NOT NULL THEN r.connections END AS connections
  FROM smd_deploy_task t JOIN projects p ON p.id=t.project_id

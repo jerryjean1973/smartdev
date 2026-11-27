@@ -1,0 +1,3 @@
+services:
+  api:
+    image: smartdev-api:deployment-portal-access-20261127

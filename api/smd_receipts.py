@@ -38,6 +38,7 @@ class AppConnection(BaseModel, extra="forbid"):
 
 
 class Connections(BaseModel, extra="forbid"):
+    portal_access: Literal["owner-pkce-v1"] | None = None
     ipv4: IPv4Address
     ssh_user: Literal["root", "ubuntu"]
     portal_url: str = Field(max_length=300)
@@ -135,9 +136,9 @@ def enroll(task_id: UUID, body: Enrollment):
 @router.get("/admin/smd-deploy-tasks/{task_id}/receipt")
 def status(task_id: UUID):
     with database() as db:
-        row = db.execute("SELECT verified_at,connections FROM smd_deploy_receipt WHERE task_id=%s", (task_id,)).fetchone()
+        row = db.execute("SELECT r.verified_at,r.connections,                   (t.status='deployed' AND t.reconciled_at IS NULL AND t.instance_id=r.instance_id) AS active                   FROM smd_deploy_receipt r JOIN smd_deploy_task t ON t.id=r.task_id WHERE r.task_id=%s", (task_id,)).fetchone()
     verified = bool(row and row["verified_at"])
-    return {"verified": verified, "connections": row["connections"] if verified else None}
+    return {"verified": verified, "active": bool(verified and row["active"]), "connections": row["connections"] if verified else None}
 
 
 @router.get("/admin/smd-deploy-tasks/{task_id}/evidence/{view}.png")

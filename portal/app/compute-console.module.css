@@ -859,6 +859,9 @@
   font-size: 11px;
   color: var(--soft);
 }
+.connection form { margin: 0 0 0 auto; }
+.connection form button { background: none; border: 0; padding: 0; cursor: pointer; }
+.connection form button,
 .connection a,
 .appRow a {
   margin-left: auto;
@@ -1167,6 +1170,7 @@
   .sectionTitle {
     align-items: flex-start;
   }
+  .connection form,
   .connection a {
     white-space: nowrap;
   }
@@ -1302,6 +1306,7 @@
     grid-template-columns: 28px minmax(0, 1fr);
     gap: 6px 9px;
   }
+  .connection form,
   .connection a {
     grid-column: 2;
     justify-self: start;
