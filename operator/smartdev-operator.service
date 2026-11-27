@@ -1,0 +1,19 @@
+[Unit]
+PartOf=smartdev-operator.socket
+Description=SmartDev DEV Docker operator
+Requires=docker.service
+After=docker.service
+
+[Service]
+ExecStart=/usr/bin/python3 -I /usr/local/lib/smartdev-operator/host_operator.py
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+StateDirectory=smartdev-operator
+StateDirectoryMode=0700
+UMask=0077

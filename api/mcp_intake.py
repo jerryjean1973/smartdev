@@ -39,6 +39,8 @@ def words(text):
 
 
 def match(candidate, instruction, title, work_key, fingerprint):
+    if work_key and candidate["work_key"] and work_key != candidate["work_key"]:
+        return 0
     if candidate["instruction_hash"] == fingerprint or (
         not candidate["instruction_hash"] and candidate["instruction"] == instruction):
         return 3
@@ -63,20 +65,23 @@ def match(candidate, instruction, title, work_key, fingerprint):
 
 
 CANDIDATES = """
-SELECT r.task_id,r.request_id,r.instruction,r.title,r.work_key,r.instruction_hash
+SELECT r.task_id,COALESCE(r.matched_request,r.request_id) AS request_id,r.instruction,r.title,r.work_key,r.instruction_hash,r.received_at AS opened,
+ r.execution_phase='Processing' AS running
 FROM mcp_task_request r LEFT JOIN objective_contract c ON c.id=r.task_id AND c.project_id=r.project_id
 WHERE r.project_id=%s AND r.task_id IS NOT NULL AND r.owner_done_at IS NULL
  AND r.admission IS DISTINCT FROM 'duplicate' AND r.execution_phase IS DISTINCT FROM 'Processed'
  AND (c.id IS NULL OR c.status='active') AND COALESCE(r.request_scope,mcp_inferred_scope(COALESCE(NULLIF(r.title,''),r.instruction)))=%s
  AND NOT EXISTS (SELECT 1 FROM objective_presentation h WHERE h.objective_id=r.task_id AND h.excluded_from_board)
 UNION ALL
-SELECT c.id,NULL,c.original_request,c.display_name,NULL,NULL FROM objective_contract c
+SELECT c.id,NULL,c.original_request,c.display_name,NULL,NULL,c.created_at,
+ EXISTS (SELECT 1 FROM objective_run x WHERE x.project_id=c.project_id AND x.objective_id=c.id AND x.finished_at IS NULL AND x.lease_until>now()) FROM objective_contract c
 WHERE c.project_id=%s AND c.status='active' AND
  COALESCE(substring(c.business_objective from '^BO-[0-9]+'),mcp_inferred_scope(c.original_request))=%s
  AND NOT EXISTS (SELECT 1 FROM objective_presentation h WHERE h.objective_id=c.id AND h.excluded_from_board)
  AND NOT EXISTS (SELECT 1 FROM objective_run x WHERE x.objective_id=c.id AND x.project_id=c.project_id
    AND x.version=c.version AND x.finished_at IS NOT NULL AND x.exit_code=0 AND NOT c.criteria @> '[{"mandatory":true}]'::jsonb
    AND NOT EXISTS (SELECT 1 FROM objective_run y WHERE y.objective_id=c.id AND y.started_at>x.started_at))
+ORDER BY running DESC NULLS LAST, opened ASC NULLS LAST,task_id,request_id
 """
 
 
@@ -105,14 +110,16 @@ def receive(project, request, kind, prompt, title, task, scope=None, *, work_key
             claimed = db.execute("SELECT message_id FROM conversation_submission WHERE task_project_id=%s AND request_id=%s",
                                  (project, request)).fetchone()
             target = saved["task_id"] or (claimed["message_id"] if claimed and kind == "create" else task)
-        if kind == "create" and not saved:
+        if kind in ("create","message") and not saved:
             assignment = scope or db.execute("SELECT mcp_inferred_scope(%s) AS id", (title or prompt,)).fetchone()["id"]
             candidates = db.execute(CANDIDATES, (project, assignment, project, assignment)).fetchall()
+            if kind=="message":
+                candidates=[c for c in candidates if str(c["task_id"])==str(task) and c["request_id"]]
             ranked = [(match(c, prompt, title, work_key, fingerprint), c) for c in candidates]
             best = max((score for score,_ in ranked), default=0)
             hits = [c for score,c in ranked if score == best and best]
-            if len({c["task_id"] for c in hits}) == 1:
-                chosen = next((c for c in hits if c["request_id"]), hits[0])
+            if hits and (best==3 or work_key and best==2 or len({c["task_id"] for c in hits}) == 1):
+                chosen = next((c for c in hits if c["task_id"]==hits[0]["task_id"] and c["request_id"]), hits[0])
                 target, linked = chosen["task_id"], chosen["request_id"]
                 action = "duplicate" if best == 3 else "updated"
         target = target or uuid5(request, "codex-task")

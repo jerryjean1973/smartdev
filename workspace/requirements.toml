@@ -1,0 +1,26 @@
+allowed_sandbox_modes = ["read-only", "workspace-write"]
+allowed_approval_policies = ["never"]
+
+[features]
+hooks = true
+multi_agent = false
+multi_agent_v2 = false
+
+[hooks]
+managed_dir = "/usr/local/bin"
+
+[[hooks.SessionStart]]
+matcher = "^(startup|resume|compact|fork|clear)$"
+
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "/usr/local/bin/codex-governance-hook"
+timeout = 5
+
+[[hooks.PreToolUse]]
+matcher = "^(Bash|apply_patch)$"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "/usr/local/bin/codex-governance-hook"
+timeout = 5

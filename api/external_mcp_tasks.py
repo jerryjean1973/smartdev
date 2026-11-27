@@ -154,6 +154,8 @@ class ScopedTasks(ScopedTaskReads):
     def list_tasks(self, project_id, status=None):
         project = self._require_project(project_id)
         tasks = self._execution_status(project, super().list_tasks(project))
+        ids={task["task_id"] for task in tasks}
+        tasks.extend(task for task in history.pending_tasks(project) if task["task_id"] not in ids)
         return [task for task in tasks if status is None or task["status"] == status]
 
     def get_task(self, task_id):

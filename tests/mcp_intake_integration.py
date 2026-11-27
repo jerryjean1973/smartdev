@@ -70,7 +70,10 @@ def exercise():
         receipt=client.create_task(first,"Correct sorting of the binary package inventory",uuid4(),scope="global")
         assert receipt["status"]=="Pending" and receipt["task_id"]==receipt["codex_task_id"]
         assert client.get_task(receipt["task_id"])["status"]=="Pending"
-        assert client.send_message(receipt["task_id"],"Include archived packages",uuid4())["codex_task_id"]==receipt["task_id"]
+        message = "Include archived packages when sorting the release inventory"
+        assert client.send_message(receipt["task_id"],message,uuid4())["admission"]=="message"
+        assert client.send_message(receipt["task_id"],message,uuid4())["admission"]=="duplicate"
+        assert client.send_message(receipt["task_id"],message+" and keep signed versions first",uuid4())["admission"]=="updated"
     with database() as db:
         db.execute("UPDATE mcp_task_outbox SET next_attempt=now() WHERE request_id=%s",(receipt["request_id"],))
         record=db.execute("SELECT envelope FROM mcp_task_outbox WHERE request_id=%s",(receipt["request_id"],)).fetchone()

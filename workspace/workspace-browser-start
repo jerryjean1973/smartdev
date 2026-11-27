@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+import json,socket,sys
+with socket.socket(socket.AF_UNIX) as sock:
+    sock.settimeout(18);sock.connect("/run/command-memory/tools.sock")
+    sock.sendall(b'{"action":"browser"}\n')
+    reply=sock.makefile("rb").readline(256)
+    if reply!=b"OK\n":sys.exit("The project browser could not start.")

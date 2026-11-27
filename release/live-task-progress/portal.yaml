@@ -1,0 +1,3 @@
+services:
+  portal:
+    image: smartdev-portal:live-task-progress

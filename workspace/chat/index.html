@@ -1,0 +1,76 @@
+<!doctype html><html lang="en" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content"><title>Project Codex</title><link rel="stylesheet" href="style.css"><script defer src="timeline.js"></script><script defer src="browser.js"></script><script defer src="chat.js"></script></head>
+<body>
+<section id="checkpoint-history" hidden>
+  <label>Starting version<select id="history-from"></select></label>
+  <label>Compare or restore to<select id="history-to"></select></label>
+  <label>File to restore, optional<input id="history-file"></label>
+  <button id="compare-versions">Compare</button>
+  <button id="restore-version" disabled>Restore reviewed changes</button>
+  <p id="history-status" role="status"></p>
+  <pre id="history-diff" aria-label="Checkpoint diff"></pre>
+</section>
+<section id="upload-explorer" hidden>
+  <h3>uploads/</h3>
+  <label>Search uploads<input id="upload-search" type="search"></label>
+  <ul id="project-uploads"></ul>
+  <p id="upload-status" role="status"></p>
+</section>
+<header class="conversation-header">
+  <div id="task-state"><small>Conversation</small><strong>Main</strong></div>
+  <span id="run-state" role="status"><span id="activity-indicator" hidden aria-hidden="true"></span><span id="run-label"></span></span>
+  <div class="conversation-copy-tools">
+    <template id="copy-response-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></template>
+    <button id="copy-history" type="button" title="Copy conversation — last 48 hours" aria-label="Copy conversation — last 48 hours" disabled>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="5" y="4" width="14" height="16" rx="2"/><path d="M9 4V2h6v2M8 9h8m-8 4h8m-8 4h8"/></svg>
+    </button>
+    <span id="copy-feedback" role="status" aria-live="polite"></span>
+  </div>
+  <a class="taskboard-link" href="https://smartdev.youkandoit.com/?view=taskboard" target="_blank" rel="noopener noreferrer">Taskboard</a>
+  <details class="chat-scope">
+    <summary aria-label="Conversation options" title="Conversation options">⋯</summary>
+    <div class="scope-menu">
+      <button id="review" disabled>Review changes</button>
+      <button id="open-queue" type="button" hidden>Queue instruction</button>
+      <details id="legacy-main-queue" hidden><summary>Retained instructions</summary><ul></ul></details>
+      <button id="task-details" type="button" hidden>Task details</button>
+      <div class="fields"><label>Git worktree<select id="tree"></select></label><label>Objective ID<input id="objective"></label><label>Acceptance criterion<input id="criterion"></label><label>Memory search<input id="terms" maxlength="300"></label></div>
+      <div id="saved-conversations" hidden><h4>Saved conversations</h4><div></div></div>
+    </div>
+  </details>
+</header>
+<div class="chat-auth" id="auth-panel" hidden><span id="auth-message"></span>
+  <button id="reconnect-codex" hidden>Reconnect Codex</button><button id="retry-codex" hidden>Retry</button>
+</div>
+<main class="development-feed">
+  <div id="output" aria-label="Development activity and conversation" tabindex="0"></div>
+</main>
+<details id="decisions" class="workflow-section task-updates" hidden>
+  <summary>Task updates <span id="decision-count"></span></summary>
+  <div id="decision-list"></div>
+</details>
+<details id="execution-queue" class="workflow-section" hidden>
+  <summary>Queue <span id="queue-count"></span></summary>
+  <ol id="queue-list"></ol>
+  <div class="queue-controls">
+    <button id="queue-toggle" type="button" hidden>Pause</button>
+    <details><summary>Add instruction</summary>
+      <form id="queue-form">
+        <input aria-label="Queued instruction" id="queue-instruction" required maxlength="30000">
+        <label class="queue-independent"><input id="queue-independent" type="checkbox"> Independent step</label>
+        <button type="submit">Queue instruction</button>
+      </form>
+    </details>
+  </div>
+</details>
+<div class="composer">
+  <div id="reply-context" hidden><span></span><button type="button" aria-label="Cancel reply">×</button></div>
+  <label class="sr-only" for="prompt">Codex instructions</label>
+  <textarea id="prompt" rows="3" placeholder="Message Codex…"></textarea>
+  <div class="toolbar">
+    <input class="sr-only" type="file" id="upload" multiple><label class="attach" for="upload" title="Attach files"><span aria-hidden="true">＋</span><span class="sr-only">Attach files</span></label>
+    <button id="cancel" hidden disabled aria-label="Stop execution" title="Stop execution">■</button>
+  </div>
+  <ul id="files"></ul><p id="status" role="status"></p>
+  <button id="run" disabled aria-label="Send message" title="Send message">↑</button>
+</div>
+</body></html>

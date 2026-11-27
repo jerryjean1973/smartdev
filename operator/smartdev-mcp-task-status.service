@@ -1,0 +1,6 @@
+[Unit]
+Description=Reconcile MCP tasks with their workspace execution
+After=docker.service
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /root/dev-command-center/operator/mcp_execution_status.py

@@ -1,16 +1,19 @@
 """Managed deployment entry point. Only the registered issuer can initiate owner sign-in."""
 import os
+import json
+import re
 import time
 from secrets import token_urlsafe
 from urllib.parse import urlsplit
 from uuid import UUID
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 import httpx
 from starlette.concurrency import run_in_threadpool
 
-from core import issue_session
+from core import issue_session, valid_session
+from store import database
 from main import app as native
 from portal_handoff import ISSUER, PROTOCOL, RECEIVER, TOKEN, TTL, challenge, fields, post_page, require_origin
 
@@ -91,6 +94,63 @@ async def finish(request: Request):
     return response
 
 
+def tenant_projects():
+    return {str(UUID(p)) for p in os.getenv("SMD_PORTAL_PROJECTS","").split(",") if p}
+
+
+def tenant_board(path, projects, requested=None):
+    allowed = [UUID(p) for p in projects if not requested or p==requested]
+    if not allowed:
+        return []
+    with database() as db:
+        if path == "/taskboard/business-objectives":
+            return db.execute("""SELECT b.* FROM business_objective b WHERE EXISTS (
+                SELECT 1 FROM objective_contract c WHERE c.project_id=ANY(%s)
+                AND substring(c.business_objective from '^BO-[0-9]+')=b.id) ORDER BY b.execution_order""",(allowed,)).fetchall()
+        if not db.execute("SELECT to_regclass('mcp_task_request') AS t").fetchone()["t"]:
+            return []
+        import mcp_request_history as history
+        return db.execute("SELECT "+history.COLUMNS+history.SOURCE+" AND r.project_id=ANY(%s) ORDER BY r.received_at DESC",(allowed,)).fetchall()
+
+
+async def tenant_api(scope,receive,send):
+    from fastapi.encoders import jsonable_encoder
+    request = Request(scope, receive)
+    path, method = scope["path"], scope["method"]
+    projects = tenant_projects()
+    hidden = JSONResponse({"detail":"Not found."},404)
+    if path in ("/health","/login","/logout","/coder-session","/__smartdev/session"):
+        return await native(scope,receive,send)
+    if path in ("/taskboard/business-objectives","/taskboard/mcp-requests") and method=="GET":
+        if not valid_session(request.cookies.get("__Host-command",""),bytes.fromhex(os.environ["SESSION_KEY"])):
+            return await JSONResponse({"detail":"Authentication required"},401)(scope,receive,send)
+        rows=await run_in_threadpool(tenant_board,path,projects,request.query_params.get("project_id"))
+        return await JSONResponse(jsonable_encoder(rows),headers={"Cache-Control":"no-store"})(scope,receive,send)
+    if path in ("/projects","/task-navigation") and method=="GET":
+        messages=[]
+        async def collect(message):
+            messages.append(message)
+        await native(scope,receive,collect)
+        status=messages[0]["status"]
+        if status!=200:
+            for message in messages:
+                await send(message)
+            return
+        rows=json.loads(b"".join(m.get("body",b"") for m in messages[1:]))
+        column="id" if path=="/projects" else "project_id"
+        rows=[r for r in rows if isinstance(r,dict) and str(r.get(column)) in projects]
+        return await JSONResponse(rows,headers={"Cache-Control":"no-store","X-SmartDev-Portal":"tenant"})(scope,receive,send)
+    if path.startswith("/taskboard/mcp-requests/") and method=="GET":
+        if request.query_params.get("project_id") in projects:
+            return await native(scope,receive,send)
+    scoped = re.fullmatch(r"/(workspace-memory|projects)/([a-f0-9-]{36})(?:/([^/]+)(?:/.*)?)?",path)
+    if scoped and scoped[2] in projects:
+        if scoped[1]=="workspace-memory" or scoped[3] in {
+            "preview","development","objectives","tasks","mcp-tasks","conversations","runtime","integrations","memory","evidence","activity"}:
+            return await native(scope,receive,send)
+    return await hidden(scope,receive,send)
+
+
 async def app(scope, receive, send):
     # Uvicorn still delegates the native API's full lifespan and all normal routes to its original app.
     if scope["type"] == "http" and scope["path"].startswith(prefix + "/"):
@@ -100,4 +160,6 @@ async def app(scope, receive, send):
                 message["headers"].append((b"cache-control", b"no-store"))
             await send(message)
         return await receiver(scope, receive, no_cache)
+    if scope["type"]=="http":
+        return await tenant_api(scope,receive,send)
     return await native(scope, receive, send)

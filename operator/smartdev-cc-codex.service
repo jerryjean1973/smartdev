@@ -1,0 +1,29 @@
+[Unit]
+Description=SmartDev Command Center owner Codex conversation
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /srv/command-center/operator/cc_codex.py
+WorkingDirectory=/srv/command-center
+Environment=CODEX_HOME=/var/lib/smartdev-cc-codex/codex
+Environment=HOME=/var/lib/smartdev-cc-codex
+StateDirectory=smartdev-cc-codex
+StateDirectoryMode=0700
+RuntimeDirectory=smartdev-cc-codex
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=restart
+LoadCredential=model-api-key:/root/.secrets/smartdev-test-openai-key
+ProtectHome=tmpfs
+ProtectSystem=strict
+BindPaths=/root/dev-command-center:/srv/command-center
+InaccessiblePaths=-/run/docker.sock -/run/systemd -/etc/smartdev-operator -/var/lib/dev-command-center -/var/lib/docker
+NoNewPrivileges=yes
+PrivateTmp=yes
+UMask=0077
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

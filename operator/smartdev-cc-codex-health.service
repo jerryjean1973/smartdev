@@ -1,0 +1,9 @@
+[Unit]
+Description=Check and recover the SmartDev Ask CC socket connection
+After=docker.service smartdev-cc-codex.service
+ConditionPathExists=/run/docker.sock
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /root/dev-command-center/operator/cc_codex_health.sh
+TimeoutStartSec=75s

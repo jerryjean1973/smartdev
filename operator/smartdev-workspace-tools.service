@@ -1,0 +1,11 @@
+[Unit]
+Description=Workspace Chromium and project-scoped Git reads
+After=docker.service
+Requires=docker.service
+[Service]
+ExecStart=/usr/bin/python3 /opt/smartdev-workspace-tools/service.py
+Restart=on-failure
+RestartSec=4
+UMask=0077
+[Install]
+WantedBy=multi-user.target

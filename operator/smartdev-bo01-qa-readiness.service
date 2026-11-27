@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh BO-01 VG QA runtime readiness
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker exec -i smart-dev-ide-browser-api-1 python -
+StandardInput=file:/root/dev-command-center/scripts/smd-bo01-qa-readiness.py
+TimeoutStartSec=90

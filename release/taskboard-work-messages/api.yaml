@@ -1,0 +1,19 @@
+services:
+  api:
+    image: smartdev-api:qa-installation-receipts
+    environment:
+      SMARTDEV_TASK_WORK_HISTORY: /run/smartdev-task-work-history
+      SMARTDEV_SMD_EVIDENCE_DIRECTORY: /run/smartdev-smd-evidence
+    volumes:
+      - type: bind
+        source: /var/lib/dev-command-center/smd-browser-evidence
+        target: /run/smartdev-smd-evidence
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /var/lib/dev-command-center/task-work-history
+        target: /run/smartdev-task-work-history
+        read_only: true
+        bind:
+          create_host_path: false

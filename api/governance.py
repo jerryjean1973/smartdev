@@ -239,14 +239,16 @@ def progress(db, row, candidate=None):
 
 
 @router.get("/projects/{project_id}/objectives")
-def list_objectives(project_id: UUID):
+def list_objectives(project_id: UUID, source: Literal["mcp"] | None = None):
     with database() as db:
         lock_project(db, project_id)
         rows = db.execute("""
             SELECT c.* FROM objective_contract c
             LEFT JOIN objective_presentation placement ON placement.objective_id=c.id AND placement.excluded_from_board
-            WHERE c.project_id=%s AND placement.objective_id IS NULL ORDER BY c.created_at DESC,c.id DESC
-        """, (project_id,)).fetchall()
+            WHERE c.project_id=%s AND placement.objective_id IS NULL
+        """ + (""" AND EXISTS (SELECT 1 FROM mcp_task_request r WHERE r.project_id=c.project_id
+              AND r.task_id=c.id AND r.kind='create' AND r.admission IS DISTINCT FROM 'duplicate')""" if source else "") +
+            " ORDER BY c.created_at DESC,c.id DESC", (project_id,)).fetchall()
         results = []
         for row in rows:
             state = progress(db, row)

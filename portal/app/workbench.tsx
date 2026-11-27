@@ -106,7 +106,7 @@ export default function Workbench({projects, createForm, signOut, updateProject,
       setShowAdmin(false);
       setShowTaskboard(true);
     }
-    if (view === 'cc-chat') setCcConversation({title: 'Main'});
+    if (!codingOnly && view === 'cc-chat') setCcConversation({title: 'Main'});
   }, []);
   const [failure, setFailure] = useState('');
   const [development, setDevelopment] = useState<{status: string; editor_ready: boolean; preview_ready?: boolean; chat_ready?: boolean; dev_preview_url?:string}>({status: '', editor_ready: false});
@@ -159,7 +159,7 @@ export default function Workbench({projects, createForm, signOut, updateProject,
   const registeredProductPreview = deploymentPreview || configuredUrl && /^https:\/\/(?:v2\.bcentrisk\.com|vendorgate\.ca)\//.test(configuredUrl);
   const automatic=Boolean(previewSettings && !previewSettings.error && !configuredUrl &&
     configured.mode==='automatic' && previewEnvironment==='DEV' && workspace);
-  const frameUrl=configuredUrl || (automatic && development.preview_ready && coderConnection==='connected' ? previewUrl : null);
+  const frameUrl=managementOnly ? null : configuredUrl || (automatic && development.preview_ready && coderConnection==='connected' ? previewUrl : null);
   const previewMenu=useRef<HTMLDetailsElement>(null);
   const [previewAction,setPreviewAction]=useState('');
   const [restartingPreview,setRestartingPreview]=useState(false);
@@ -289,7 +289,7 @@ export default function Workbench({projects, createForm, signOut, updateProject,
   }
   useEffect(() => { void connectCoder(); }, []);
   useEffect(() => {
-    if (!selected?.id) return;
+    if (!selected?.id || managementOnly) return;
     let closed = false;
     setObjectives([]);
     setFailure('');
@@ -318,6 +318,7 @@ export default function Workbench({projects, createForm, signOut, updateProject,
     void publishing();
     const publishingTimer=setInterval(publishing,5000);
     async function refresh() {
+      if (showTaskboard) return;
       try {
         const response = await fetch('/api/projects/' + selected.id + '/objectives');
         if (!response.ok) throw new Error('Task status is unavailable.');
@@ -330,7 +331,7 @@ export default function Workbench({projects, createForm, signOut, updateProject,
     void refresh();
     const timer = setInterval(refresh, 3000);
     return () => { closed = true; clearInterval(timer); clearInterval(runtimeTimer); clearInterval(publishingTimer); };
-  }, [selected?.id]);
+  }, [selected?.id,showTaskboard]);
   useEffect(() => {
     function shortcuts(event: KeyboardEvent) {
       if (!event.altKey || event.shiftKey || event.ctrlKey) return;
@@ -727,7 +728,7 @@ export default function Workbench({projects, createForm, signOut, updateProject,
       </aside>{showProjects && (showTaskboard || showCommand || showView) && divider('left')}
       {showTaskboard && <div className="wb-taskboard-panel">
         <Taskboard projects={available} navigation={navigation} sidebarTasks={sidebarTasks} parents={parents}
-          onAskCc={(taskId, title) => setCcConversation({taskId, title})}
+          onAskCc={codingOnly ? undefined : (taskId, title) => setCcConversation({taskId, title})}
           onReply={(projectId, taskId) => {
             const project = available.find(item => item.id === projectId);
             if (managementOnly) {
@@ -745,7 +746,7 @@ export default function Workbench({projects, createForm, signOut, updateProject,
           <h3>{coderConnection === 'connecting' ? 'Connecting to Codex' : 'Coder connection unavailable'}</h3>
           {coderConnection === 'failed' && <button onClick={() => void connectCoder()}>Reconnect</button>}
         </div>}
-        {available.filter(project => chatOpened.includes(project.id) && project.workspace_url).map(project =>
+        {!managementOnly && available.filter(project => chatOpened.includes(project.id) && project.workspace_url).map(project =>
           <iframe key={project.id} data-chat-project={project.id} className="wb-chat" hidden={showTaskDetails || creating || coderConnection !== 'connected' || project.id !== selected?.id}
             title={project.name + ' Codex chat'} src={project.workspace_url!.replace(/\/$/, '') + '/apps/codex-chat/'}
             allow="clipboard-read; clipboard-write" />)}

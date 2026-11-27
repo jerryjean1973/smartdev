@@ -1,0 +1,7 @@
+[Unit]
+Description=Check workspace developer sign-in, Git, network and Chromium
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=30min
+[Install]
+WantedBy=timers.target

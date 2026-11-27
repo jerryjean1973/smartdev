@@ -1,0 +1,15 @@
+[Unit]
+Description=Pick up owner-approved SmartDev SMD deployments
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/dev-command-center
+ExecStart=/usr/bin/python3 /root/dev-command-center/scripts/smd-task-runner.py
+Environment=SMARTDEV_OWNER_PASSWORD_FILE=/root/.smart-dev-validation.UN6j8q/portal-password
+EnvironmentFile=-/etc/smartdev/smd-runner.env
+StateDirectory=smartdev-smd-runner
+StateDirectoryMode=0700
+UMask=0077
+TimeoutStartSec=28min

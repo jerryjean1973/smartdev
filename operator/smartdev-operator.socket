@@ -1,0 +1,10 @@
+[Unit]
+Description=SmartDev DEV operator socket
+
+[Socket]
+ListenStream=/run/smartdev-operator.sock
+SocketMode=0600
+SocketUser=root
+
+[Install]
+WantedBy=sockets.target

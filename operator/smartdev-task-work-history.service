@@ -1,0 +1,7 @@
+[Unit]
+Description=Publish task-linked Codex work messages
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /root/dev-command-center/operator/task_work_history.py
+UMask=0077

@@ -19,7 +19,8 @@ def run():
     with database() as db:
         db.execute('CREATE TEMP TABLE projects(id uuid PRIMARY KEY,name text,archived boolean default false)')
         db.execute('CREATE TEMP TABLE acceptance_fixture(project_id uuid)')
-        db.execute('CREATE TEMP TABLE objective_contract(id uuid,project_id uuid,display_name text,business_objective text,status text)')
+        db.execute('CREATE TEMP TABLE objective_contract(id uuid,project_id uuid,display_name text,business_objective text,status text,original_request text,created_at timestamptz,criteria jsonb,version integer)')
+        db.execute('CREATE TEMP TABLE objective_run AS SELECT * FROM public.objective_run WITH NO DATA')
         db.execute('CREATE TEMP TABLE objective_presentation(objective_id uuid,excluded_from_board boolean,reason text)')
         migration=Path('api/052_mcp_task_requests.sql').read_text().replace('CREATE TABLE IF NOT EXISTS','CREATE TEMP TABLE')
         db.execute(migration)
@@ -31,7 +32,7 @@ def run():
         db.execute("CREATE TEMP TABLE external_mcp_grant(id uuid PRIMARY KEY)")
         db.execute(Path('api/059_mcp_intake.sql').read_text().replace('CREATE TABLE IF NOT EXISTS','CREATE TEMP TABLE'))
         db.execute("INSERT INTO projects(id,name) VALUES (%s,'QA A'),(%s,'QA B')",(a,b))
-        db.execute("INSERT INTO objective_contract VALUES (%s,%s,'Task','BO-01','active')",(t,a))
+        db.execute("INSERT INTO objective_contract(id,project_id,display_name,business_objective,status) VALUES (%s,%s,'Task','BO-01','active')",(t,a))
 
         @contextmanager
         def connection():

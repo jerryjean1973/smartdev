@@ -1,6 +1,7 @@
 """Generate a one-shot cloud-init script for a pinned SmartDev release."""
 
 from ipaddress import IPv4Address
+from hashlib import file_digest
 import base64
 import gzip
 from pathlib import Path
@@ -207,10 +208,25 @@ from pathlib import Path
 import sys
 target = Path(sys.argv[1])
 for name, contents in json.loads(decompress(b64decode(sys.argv[2], validate=True))).items():
-    if name not in {"portal_handoff.py", "deployment_portal_receiver.py", "enroll_deployment_portal.py"}:
+    if name not in {"portal_handoff.py", "deployment_portal_receiver.py", "enroll_deployment_portal.py", "development.py", "041_frozen_business_objectives.sql"}:
         raise SystemExit("Unknown portal enrollment component.")
     (target / name).write_text(contents)
 PY_PORTAL_FILES
+if [[ -n "$workbench_url" ]]; then
+    assets="/opt/smartdev/$project_id/data/workbench/$workbench_sha256"
+    install -d -m 0700 "$assets"
+    curl --fail --silent --show-error --retry 4 --proto '=https' --max-time 90 "$workbench_url" -o "$work/workbench.tgz"
+    printf '%s  %s\n' "$workbench_sha256" "$work/workbench.tgz" | sha256sum -c --status
+    python3 - "$work/workbench.tgz" "$assets" <<'PY_WORKBENCH'
+import sys,tarfile
+with tarfile.open(sys.argv[1]) as archive:
+    members=archive.getmembers()
+    if len(members)!=4 or not all(m.isfile() for m in members) or {m.name for m in members}!={"apps.py","enroll-api.py","managed_workspace.py","next.tar.gz"}:
+        raise SystemExit("Unexpected managed workbench package")
+    archive.extractall(sys.argv[2],filter="data")
+PY_WORKBENCH
+    python3 "$assets/managed_workspace.py" "$project_id" "$workbench_sha256"
+fi
 python3 "$work/enroll_deployment_portal.py" "$project_id" "$task_id" "$instance_id" \
     "$portal_issuer" "https://$deployment_hostname" "$work"
 
@@ -385,10 +401,18 @@ def cloud_init(claim, callback_url, private_key, *, ingress=None, upstream_tls=N
         recovery_key = " ".join(recovery_key.split()[:2])
     scripts = Path(__file__).resolve().parent
     components = [scripts / "enroll_deployment_portal.py",
-                  scripts.parent / "api" / "deployment_portal_receiver.py", scripts.parent / "api" / "portal_handoff.py"]
+                  scripts.parent / "api" / "041_frozen_business_objectives.sql", scripts.parent / "api" / "development.py", scripts.parent / "api" / "deployment_portal_receiver.py", scripts.parent / "api" / "portal_handoff.py"]
+    workbench_url = ""
+    workbench_digest = ""
+    installer_path = urlsplit(installer_url)
+    if re.fullmatch(r"/api/smd-release/[a-f0-9]{64}/installer\.sh",installer_path.path) and not installer_path.query:
+        with (scripts.parent/"api"/"smd_workbench.tar.gz").open("rb") as archive:
+            workbench_digest = file_digest(archive,"sha256").hexdigest()
+        workbench_url = installer_url.rsplit("/",1)[0]+"/workbench-"+workbench_digest+".tar.gz"
     packed = json.dumps({p.name: p.read_text() for p in components}, separators=(",", ":")).encode()
     callback = urlsplit(https_url(callback_url))
     variables = {
+        "workbench_sha256":workbench_digest, "workbench_url":workbench_url,
         "portal_receiver_files": base64.b64encode(gzip.compress(packed, mtime=0)).decode(),
         "portal_issuer": https_url(f"https://{callback.netloc}", origin=True),
         "recovery_key": recovery_key or "",

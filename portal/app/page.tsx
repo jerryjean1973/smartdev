@@ -34,6 +34,7 @@ async function failure(response: Response) {
 }
 
 export default function Portal() {
+  const [tenantPortal,setTenantPortal] = useState(false);
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [error, setError] = useState('');
@@ -55,6 +56,7 @@ export default function Portal() {
       return;
     }
     if (!response.ok) throw new Error(await failure(response));
+    setTenantPortal(response.headers.get("X-SmartDev-Portal")==="tenant");
     setProjects(await response.json());
     setSignedIn(true);
   }
@@ -149,7 +151,7 @@ export default function Portal() {
     {error && <p role="alert" className="error">{error}</p>}
     <Workbench projects={projects ?? []} signOut={signOut}
       managementOnly={window.location.hostname === 'smartdev.youkandoit.com'}
-      codingOnly={window.location.hostname === 'coder.smartdev.youkandoit.com'
+      codingOnly={tenantPortal || window.location.hostname === 'coder.smartdev.youkandoit.com'
         || /^smd-[a-f0-9]{32}\./.test(window.location.hostname)}
       updateProject={(project, verb) => updateProject(project.id, project.name, verb)}
       createForm={(

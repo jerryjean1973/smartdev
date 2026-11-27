@@ -68,6 +68,7 @@ def delivered(project, request, result=None):
 # Scope every relation to the original project and honor explicit task removal and fixture isolation.
 SOURCE = """
  FROM mcp_task_request r JOIN projects p ON p.id=r.project_id
+ LEFT JOIN mcp_task_request covered ON r.admission='duplicate' AND (covered.project_id,covered.request_id)=(r.project_id,r.matched_request)
  LEFT JOIN objective_contract c ON (c.project_id,c.id)=(r.project_id,r.task_id)
  CROSS JOIN LATERAL (SELECT COALESCE(r.request_scope,mcp_inferred_scope(COALESCE(NULLIF(r.title,''),r.instruction))) AS value) assignment
  LEFT JOIN business_objective bo ON bo.id=assignment.value
@@ -77,9 +78,9 @@ SOURCE = """
 """
 COLUMNS = """r.request_id,r.project_id,p.name AS project_name,r.task_id,r.task_id AS codex_task_id,r.admission,r.matched_request,r.message_id,
  r.execution_ref AS receipt,r.kind,r.delivery,r.received_at,bo.id AS business_objective,
- CASE WHEN r.owner_done_at IS NOT NULL OR (r.kind='create' AND c.status='done') THEN 'Done'
-      WHEN r.execution_phase IS NOT NULL THEN r.execution_phase
-      WHEN r.delivery='accepted' THEN 'Queued' ELSE 'Pending' END AS work_status,
+ CASE WHEN COALESCE(covered.owner_done_at,r.owner_done_at) IS NOT NULL OR (r.kind='create' AND c.status='done') THEN 'Done'
+      WHEN COALESCE(covered.execution_phase,r.execution_phase) IS NOT NULL THEN COALESCE(covered.execution_phase,r.execution_phase)
+      WHEN COALESCE(covered.delivery,r.delivery)='accepted' THEN 'Queued' ELSE 'Pending' END AS work_status,
  r.execution_code,r.waiting_for_input,r.execution_updated_at,
  CASE WHEN bo.id IS NOT NULL THEN 'objective' WHEN assignment.value='global' THEN 'global' ELSE 'unassigned' END AS scope_kind,
  c.business_objective AS origin_business_objective,c.display_name AS task_title,
@@ -166,3 +167,11 @@ def pending_task(task, projects):
         raise LookupError("Task not available")
     return {"task_id":str(row["task_id"]), "codex_task_id":str(row["task_id"]),
             "title":row["task_title"] or row["label"], "project_id":str(row["project_id"]), "status":row["work_status"]}
+
+def pending_tasks(project):
+    with database() as db:
+        rows=db.execute("SELECT DISTINCT ON(r.task_id) "+COLUMNS+SOURCE+
+            " AND r.project_id=%s AND r.admission='created' AND c.id IS NULL ORDER BY r.task_id,r.received_at",
+            (project,)).fetchall()
+    return [{"project_id":str(project),"task_id":str(r["task_id"]),"codex_task_id":str(r["task_id"]),
+             "title":r["label"],"status":r["work_status"]} for r in rows]

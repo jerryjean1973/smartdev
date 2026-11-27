@@ -1,0 +1,9 @@
+{
+  "name": "codex-browser",
+  "displayName": "Codex Project Chat",
+  "publisher": "command-center",
+  "version": "1.0.0",
+  "engines": {"vscode": "^1.96.0"},
+  "main": "./extension.js",
+  "contributes": {"commands": [{"command": "commandCenter.codex", "title": "Command Center: Open Codex Chat"}, {"command": "commandCenter.pullRequest", "title": "Command Center: Open GitHub Pull Request"}]}
+}

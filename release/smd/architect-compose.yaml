@@ -1,0 +1,38 @@
+services:
+  ollama:
+    image: ${SMD_OLLAMA_IMAGE:?}
+    restart: unless-stopped
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_MODELS: /models
+      OLLAMA_NO_CLOUD: "1"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_NUM_PARALLEL: "1"
+      CUDA_VISIBLE_DEVICES: "-1"
+      ROCR_VISIBLE_DEVICES: "-1"
+    healthcheck:
+      test: ["CMD", "ollama", "show", "qwen2.5:1.5b"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [architecture]
+    volumes:
+      - ./models:/models:ro
+  architect:
+    image: ${SMD_API_IMAGE:?}
+    restart: unless-stopped
+    command: ["uvicorn", "architect:app", "--host", "0.0.0.0", "--port", "8060", "--app-dir", "/architect"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8060/health', timeout=4)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [architecture]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ./architect.py:/architect/architect.py:ro
+networks:
+  architecture:
+    internal: true

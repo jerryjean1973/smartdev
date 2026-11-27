@@ -110,7 +110,7 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
   navigation?: Navigation;
   sidebarTasks: SidebarTask[];
   parents: Record<string, string>;
-  onAskCc: (taskId: string, title: string) => void;
+  onAskCc?: (taskId: string, title: string) => void;
   onReply: (projectId: string, taskId: string) => void;
 }) {
   const projectIds = projects.map(project => project.id).sort().join(',');
@@ -119,7 +119,7 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
   const [hostTasks, setHostTasks] = useState<string[]>([]);
   const [unavailable, setUnavailable] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  const [projectFilter, setProjectFilter] = useState('');
+  const [projectFilter, setProjectFilter] = useState(()=>typeof window==='undefined'?'':new URLSearchParams(window.location.search).get('project') || '');
   const [filter, setFilter] = useState<Filter>('All tasks');
   const [open, setOpen] = useState<string | null>(null);
   const [workOpen, setWorkOpen] = useState<Record<string, boolean>>({});
@@ -127,13 +127,11 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
   const [businessObjectives, setBusinessObjectives] = useState<BusinessObjective[]>([]);
   const [businessFilter, setBusinessFilter] = useState('');
   const [view, setView] = useState<'list' | 'kanban' | 'mcp'>('list');
-  const [source,setSource] = useState<'all'|'mcp'>('all');
+  const [source,setSource] = useState<'all'|'mcp'>(()=>typeof window!=='undefined' && new URLSearchParams(window.location.search).get('source')==='mcp'?'mcp':'all');
   const mcp = useMcpRequests(projectFilter);
   const [receipt,setReceipt] = useState('');
   useEffect(()=>{
     const params=new URLSearchParams(window.location.search);
-    if(params.get('source')==='mcp') setSource('mcp');
-    if(params.get('project')) setProjectFilter(params.get('project')!);
     if(params.has('receipt')) {
       setView('mcp');
       setReceipt(params.get('receipt') || '');
@@ -157,13 +155,13 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
       clearTimeout(timer);
       const ids = projectIds.split(',').filter(id=>id && (!projectFilter || id===projectFilter));
       const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(4500)]);
-      const askCc = fetch('/api/cc-codex/activity', {cache: 'no-store', signal})
+      const askCc = !onAskCc ? Promise.resolve(null) : fetch('/api/cc-codex/activity', {cache: 'no-store', signal})
         .then(async response => {
           if (!response.ok) return null;
           return await response.json() as {tasks: {task_id: string; status: CcActivity}[]; host_tasks?: string[]};
         }).catch(() => null);
       const results = await Promise.allSettled(ids.map(async id => {
-        const response = await fetch('/api/projects/' + id + '/objectives', {
+        const response = await fetch('/api/projects/' + id + '/objectives'+(source==='mcp'?'?source=mcp':''), {
           cache: 'no-store', signal,
         });
         if (!response.ok) throw Error();
@@ -197,7 +195,7 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
       window.removeEventListener('focus', followVisibleTab);
       document.removeEventListener('visibilitychange', followVisibleTab);
     };
-  }, [projectIds, projectFilter, refreshKey]);
+  }, [projectIds, projectFilter, source, refreshKey]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -243,15 +241,21 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
   const replaced=new Set<string>();
   const requestRows:Row[]=[];
   const covered=new Set<string>();
+  const sourceRequests=new Map(mcp.requests.map(request=>[request.request_id,request]));
+  const coveredRequests=new Set<string>();
   for (const request of mcp.requests) {
     if(request.admission==='duplicate') continue;
-    if(request.kind==='create' && request.task_id){
+    const original=request.matched_request?sourceRequests.get(request.matched_request):undefined;
+    const group=original?.request_id || request.request_id;
+    if(coveredRequests.has(group)) continue;
+    coveredRequests.add(group);
+    if((request.kind==='create' || original?.kind==='create') && request.task_id){
       if(covered.has(request.task_id)) continue;
       covered.add(request.task_id);
     }
     const project=projectMap.get(request.project_id);
     if (!project) continue;
-    const existing=request.kind==='create' && request.task_id ? objectiveMap.get(request.task_id) : undefined;
+    const existing=(request.kind==='create' || original?.kind==='create') && request.task_id ? objectiveMap.get(request.task_id) : undefined;
     if (existing) {
       replaced.add(existing.task.id);
       requestRows.push({...existing,request, running:existing.running || request.work_status==='Processing'});
@@ -260,7 +264,7 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
     const task:Objective={id:request.request_id,display_name:request.label,expected_outcome:request.label,
       original_request:request.label,business_objective:request.business_objective,created_at:request.received_at || '',
       status:request.work_status,version:0,criteria:[],progress:{completedCriteria:[],blockedCriteria:[],blockers:[],nextAction:null,active:[],attempts:[]}};
-    requestRows.push({project,task,request,title:request.label,status:request.work_status,running:request.work_status==='Processing'});
+    requestRows.push({project,task,request,title:original?.label || request.label,status:request.work_status,running:request.work_status==='Processing'});
   }
   const projectRows=[...objectiveRows.filter(row=>!replaced.has(row.task.id)),...requestRows]
     .filter(row=>!projectFilter || row.project.id===projectFilter);
@@ -365,7 +369,7 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
           {running && <ThinkingIcon/>}</div>
           {running && <progress aria-label={title+' processing'} />}
           <div className="wb-taskboard-actions">
-            {request.task_id && <button type="button" onClick={()=>onAskCc(request.task_id!,title+' · MCP request '+(request.receipt || request.request_id))}>Ask CC</button>}
+            {request.task_id && onAskCc && <button type="button" onClick={()=>onAskCc(request.task_id!,title+' · MCP request '+(request.receipt || request.request_id))}>Ask CC</button>}
             {request.task_id && <button onClick={()=>onReply(project.id,request.task_id!)}>Reply in Codex</button>}
             {request.work_status==='Processed' && request.execution_code===0 && !request.waiting_for_input &&
               <button onClick={async()=>{const response=await fetch('/api/projects/'+project.id+'/mcp-tasks/'+request.request_id+'/complete',{method:'POST'});if(!response.ok)setActionError('Could not complete this request.');else setNotice('Request marked done.');}}>Mark done</button>}
@@ -436,9 +440,9 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
             onClick={() => setOpen(current => current === task.id ? null : task.id)}>
             <OctagonAlert size={16} aria-hidden="true" /> Why blocked
           </button>}
-          <button type="button" aria-label={'Ask CC about ' + title} onClick={() => onAskCc(task.id, title)}>
+          {onAskCc && <button type="button" aria-label={'Ask CC about ' + title} onClick={() => onAskCc(task.id, title)}>
             Ask CC
-          </button>
+          </button>}
           <button type="button" disabled={!project.workspace_url} onClick={() => onReply(project.id, task.id)}>
             Reply in Codex
           </button>

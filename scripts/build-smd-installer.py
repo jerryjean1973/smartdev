@@ -57,7 +57,7 @@ for name in ("compose.yaml", "configure.sh", "revision"):
         raise ValueError(f"Missing release file: {name}")
 if (root / "revision").read_text().rstrip("\n") != original_revision:
     raise ValueError("Release bundle revision does not match the installer")
-allowed = {"configure.py", "compose.yaml", "apps.py", "projects.py", "enrollment.py"}
+allowed = {"configure.py", "compose.yaml", "apps.py", "projects.py", "enrollment.py", "enroll-api.py"}
 for name, encoded in json.loads(overlay).items():
     if name not in allowed:
         raise ValueError("Unexpected installer overlay entry")
@@ -161,7 +161,9 @@ def main():
         parser.error("The QA overlay also requires the original bundle revision.")
     overlay = {}
     if args.qa_overlay:
-        for name in ("configure.py", "compose.yaml", "apps.py", "projects.py", "enrollment.py"):
+        for name in ("configure.py", "compose.yaml", "apps.py", "projects.py", "enrollment.py", "enroll-api.py"):
+            if name=="enroll-api.py" and not (args.qa_overlay/name).is_file():
+                continue
             data = (args.qa_overlay / name).read_bytes()
             overlay[name] = b64encode(data).decode("ascii")
     changes = json.dumps(overlay, sort_keys=True, separators=(",", ":"))

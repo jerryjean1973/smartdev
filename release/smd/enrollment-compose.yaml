@@ -1,0 +1,10 @@
+services:
+  coder:
+    group_add: ["${SMD_DOCKER_GROUP:?}"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${SMD_DATA_DIR:?}/coder-template:/standalone-template:ro
+  api:
+    volumes:
+      - ./enroll-api.py:/app/smd_enrollment.py:ro
+      - ${SMD_DATA_DIR:?}/coder-session:/run/command-coder:ro

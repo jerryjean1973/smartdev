@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh MCP task lifecycle
+[Timer]
+OnBootSec=15s
+OnUnitInactiveSec=10s
+AccuracySec=2s
+[Install]
+WantedBy=timers.target

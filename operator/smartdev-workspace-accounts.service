@@ -1,0 +1,7 @@
+[Unit]
+Description=Enroll missing project developer accounts
+After=docker.service
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/smartdev-workspace-tools/accounts.py
+UMask=0077

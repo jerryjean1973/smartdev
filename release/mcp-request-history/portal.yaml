@@ -1,0 +1,3 @@
+services:
+  portal:
+    image: smartdev-portal:receipt-tasks-v4

@@ -1,0 +1,7 @@
+[Unit]
+Description=Refresh the registered source mirror for %i
+After=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/smartdev-workspace-tools/mirror.py /etc/smartdev/workspace-mirrors/%i.json
+UMask=0077

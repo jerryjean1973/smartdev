@@ -1,0 +1,7 @@
+[Unit]
+Description=Keep the registered source mirror current for %i
+[Timer]
+OnBootSec=10s
+OnUnitInactiveSec=45s
+[Install]
+WantedBy=timers.target

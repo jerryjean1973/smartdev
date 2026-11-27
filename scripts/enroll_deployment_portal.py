@@ -43,9 +43,14 @@ def enroll(project, task, instance, issuer, portal, source):
         command[command.index("main:app")] = "deployment_portal_receiver:app"
     elif "deployment_portal_receiver:app" not in command:
         raise ValueError("Unsupported native API application")
-    command_files = ("portal_handoff.py", "deployment_portal_receiver.py")
+    command_files = ("portal_handoff.py", "deployment_portal_receiver.py", "development.py", "041_frozen_business_objectives.sql")
     content = {name:(source / name).read_bytes() for name in command_files}
     settings = {"SMD_PORTAL_TASK": task, "SMD_PORTAL_INSTANCE": instance, "SMD_PORTAL_ISSUER": issuer}
+    settings["PGOPTIONS"] = "-c smartdev.install_kind=tenant"
+    manifest = json.loads((data / "verified-projects.json").read_text())
+    settings["SMD_PORTAL_PROJECTS"] = ",".join(str(UUID(item["id"])) for item in manifest)
+    if project not in settings["SMD_PORTAL_PROJECTS"].split(","):
+        raise ValueError("Deployment project is missing from its verified manifest")
     digest = sha256(json.dumps([settings, command],sort_keys=True).encode() + b"".join(content.values())).hexdigest()
     directory = data / "portal-access"
     version = directory / digest
@@ -83,6 +88,24 @@ def enroll(project, task, instance, issuer, portal, source):
         subprocess.run([*updated,*up],check=True)
         api = output(*updated,"ps","-q","api")
         subprocess.run(["docker","exec",api,"python","-c",verification,json.dumps(expected)],check=True)
+        workspace_probe = """import json,sys,time
+from uuid import UUID
+from development import workspace_request
+outstanding={UUID(p) for p in json.loads(sys.argv[1])}
+deadline=time.monotonic()+120
+while outstanding and time.monotonic()<deadline:
+    for project in tuple(outstanding):
+        try:
+            status=workspace_request(project)
+        except Exception:
+            continue
+        if status.get('chat_ready') and status.get('editor_ready') and status.get('preview_ready'):
+            outstanding.remove(project)
+    if outstanding: time.sleep(2)
+if outstanding: raise SystemExit('Coder could not reach the registered chat, editor and preview for '+','.join(map(str,outstanding)))
+"""
+        subprocess.run(["docker","exec",api,"python","-c",workspace_probe,
+                        json.dumps(settings["SMD_PORTAL_PROJECTS"].split(","))],check=True,timeout=160)
     except (OSError, subprocess.SubprocessError):
         subprocess.run([*stack(previous),*up],check=True)
         raise

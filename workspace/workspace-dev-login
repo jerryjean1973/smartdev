@@ -1,0 +1,9 @@
+#!/usr/bin/env node
+'use strict';
+(async()=>{
+ const config=JSON.parse(await require('node:fs/promises').readFile('/run/command-memory/dev-login.json','utf8'));
+ const selected=config[process.argv[2] || (config.application?'application':'coder')];
+ if(!selected)throw Error('This workspace has no login for that application.');
+ const verified=await require('/usr/local/lib/command-dev-login.cjs').login(selected.origin);
+ console.log(JSON.stringify({origin:verified.origin,defaultOrganization:verified.orgId,authenticated:true}));
+})().catch(e=>{console.error(e.message);process.exitCode=1});

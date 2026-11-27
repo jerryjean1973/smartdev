@@ -1,0 +1,35 @@
+#!/bin/sh
+set -eu
+umask 077
+case "$PROJECT_NAME" in p-*|project-*) ;; *) exit 1 ;; esac
+root="/projects/$PROJECT_NAME"
+mkdir -p "$root/worktrees" "$root/config" "$root/uploads"
+if [ -n "$PROJECT_REPOSITORY" ]; then
+    /usr/local/bin/git-sync || true
+elif [ ! -e "$root/repository/.git" ]; then
+    if [ -e "$root/repository" ] || [ -L "$root/repository" ]; then
+        echo "Repository path already exists. Resolve it before initializing." >&2
+        exit 1
+    fi
+    git init --initial-branch=main "$root/repository"
+fi
+editor_root="$root/repository"
+[ -d "$editor_root" ] || editor_root="$root"
+printf '%s\n' "$PROJECT_RUNTIME" > "$root/config/runtime"
+extensions="${XDG_DATA_HOME:-$HOME/.local/share}/code-server/extensions"
+mkdir -p "$extensions"
+ln -sfn /opt/command-extensions/command-center.codex-browser "$extensions/command-center.codex-browser"
+code-server --bind-addr 127.0.0.1:13337 --auth none "$editor_root" \
+    > /tmp/command-code-server.log 2>&1 </dev/null &
+server=$!
+attempt=0
+until curl -fsS http://127.0.0.1:13337/healthz > /dev/null 2>&1; do
+    kill -0 "$server" 2>/dev/null || { cat /tmp/command-code-server.log >&2; exit 1; }
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 30 ] || exit 1
+    sleep 1
+done
+
+node /opt/command-chat/server.cjs >/tmp/command-chat.log 2>&1 </dev/null &
+
+node /opt/command-preview/server.cjs >/tmp/command-preview.log 2>&1 </dev/null &

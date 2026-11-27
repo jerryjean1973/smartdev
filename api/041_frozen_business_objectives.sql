@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS business_objective (
     current_focus boolean NOT NULL DEFAULT false
 );
 
-INSERT INTO business_objective (id,title,expected_outcome,priority,execution_order,current_focus) VALUES
+INSERT INTO business_objective (id,title,expected_outcome,priority,execution_order,current_focus) SELECT * FROM (VALUES
 ('BO-01','Multi-environment deployment','Build the capability to deploy complete, independent SMD environments on your Vultr infrastructure. Azure/AWS are later options.','P0',1,true),
 ('BO-02','Tenant and deployment management','Owner-only Command Center to manage tenants, projects, Coder workspaces, hosts and deployments.','P0',2,false),
 ('BO-03','Native/custom code isolation','Separate SmartDev platform code from customer applications so platform upgrades never overwrite customer work.','P1',3,false),
@@ -16,6 +16,8 @@ INSERT INTO business_objective (id,title,expected_outcome,priority,execution_ord
 ('BO-05','Multi-agent and multithreading options','Configurable concurrent agents and tasks, with isolated execution and coordinated results.','P1',6,false),
 ('BO-07','Idea-to-app','Turn an idea into a working application through architecture, coding, testing, repair and deployment.','P2',7,false),
 ('BO-08','Automatic reusable skills','Detect recurring workflows, generate reusable skills, register them and reuse them across authorized tasks.','P2',8,false)
+) AS seed(id,title,expected_outcome,priority,execution_order,current_focus)
+WHERE current_setting('smartdev.install_kind',true) IS DISTINCT FROM 'tenant'
 ON CONFLICT (id) DO NOTHING;
 
 UPDATE objective_contract AS task

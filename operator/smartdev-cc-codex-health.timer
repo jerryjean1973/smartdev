@@ -1,0 +1,10 @@
+[Unit]
+Description=Monitor the SmartDev Ask CC socket connection
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=2min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
