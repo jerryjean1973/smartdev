@@ -260,7 +260,10 @@ export default function Workbench({projects, createForm, signOut, updateProject,
     }
   }, []);
   useEffect(() => {
-    if (managementOnly && new URLSearchParams(window.location.search).get('view') !== 'taskboard') void openWorkspaces();
+    const view = new URLSearchParams(window.location.search).get('view');
+    if (managementOnly && view && !['deployments', 'environments', 'tenants', 'taskboard'].includes(view)) {
+      void openWorkspaces();
+    }
   }, [managementOnly, openWorkspaces]);
 
   async function connectCoder() {
@@ -609,7 +612,7 @@ export default function Workbench({projects, createForm, signOut, updateProject,
     {managementOnly && <section hidden={!showFleet} aria-label={fleetPages[fleetView].label}>
       {fleetError && <p role="alert">{fleetError}</p>}
       {fleetOpening && <p role="status">Opening Workspaces…</p>}
-      {fleetReady && <iframe title={fleetView === 'workspaces' ? 'Coder workspaces' : fleetPages[fleetView].label}
+      {fleetReady && showFleet && <iframe title={fleetView === 'workspaces' ? 'Coder workspaces' : fleetPages[fleetView].label}
         src={fleetPathOverride ?? fleetPages[fleetView].path} onLoad={event => {
           fleetObserver.current?.disconnect();
           const doc = event.currentTarget.contentDocument;
@@ -643,7 +646,7 @@ export default function Workbench({projects, createForm, signOut, updateProject,
     </section>}
     {showAdmin && <AdminProjects projects={projects} signOut={signOut} onAsk={()=>setCcConversation({title:'Main'})} activeTab={managementOnly ? adminTab : undefined} />}
     {showIntegrations && <Integrations projectId={selected?.id} repository={selected?.repository} onClose={() => setShowIntegrations(false)} />}
-    <div className="wb-grid" hidden={showAdmin || (managementOnly && !showTaskboard)} style={{display: showAdmin || (managementOnly && !showTaskboard) ? 'none' : undefined, gridTemplateColumns: [
+    {(!managementOnly || showTaskboard) && <div className="wb-grid" hidden={showAdmin} style={{display: showAdmin ? 'none' : undefined, gridTemplateColumns: [
       ...(showProjects ? ['minmax(150px, min(' + prefs.left + 'px, 19vw))', '5px'] : []),
       ...(showTaskboard ? ['minmax(0, 1fr)'] : [
         ...(showCommand ? [showView ? 'minmax(270px, min(' + prefs.command + 'px, ' + (showFiles ? '31vw' : '42vw') + '))' : 'minmax(270px, 1fr)'] : []),
@@ -920,7 +923,7 @@ export default function Workbench({projects, createForm, signOut, updateProject,
           <iframe key={project.id} hidden={fileView!=='files' || coderConnection !== 'connected' || project.id !== selected?.id} title={project.name + ' IDE'}
             src={project.workspace_url!.replace(/\/$/, '') + '/apps/editor/'} allow="clipboard-read; clipboard-write" />)}
       </aside>
-    </div>
+    </div>}
 
   </div>;
 }
