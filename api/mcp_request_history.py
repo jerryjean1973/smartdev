@@ -60,7 +60,7 @@ def delivered(project, request, result=None):
             db.execute("""UPDATE mcp_task_request SET delivery='unconfirmed'
                 WHERE project_id=%s AND request_id=%s AND delivery='received'""", (project, request))
         else:
-            db.execute("""UPDATE mcp_task_request SET task_id=%s,message_id=%s,execution_ref=%s,delivery='accepted'
+            db.execute("""UPDATE mcp_task_request SET task_id=%s,message_id=%s,execution_ref=%s,delivery='accepted',dispatch_hold=NULL
                 WHERE project_id=%s AND request_id=%s""", (UUID(result["task_id"]),UUID(result["message_id"]),
                 result["execution_id"],project,request))
             db.execute("DELETE FROM mcp_task_outbox WHERE project_id=%s AND request_id=%s",(project,request))
@@ -84,10 +84,10 @@ COLUMNS = """r.request_id,r.project_id,p.name AS project_name,r.task_id,r.task_i
  taskboard_number(num.number) AS task_number,r.ingress_tenant AS tenant_name,r.ingress_actor::text AS actor,
  COALESCE(NULLIF(r.ingress_client,''),CASE WHEN r.kind<>'submission' THEN 'MCP' END) AS connector,
  CASE WHEN cc_board_destination(r.project_id,r.request_scope,c.business_objective) THEN 'Command Center' ELSE 'Workspace' END AS destination,
- r.failure_reason,CASE WHEN repair.revision IS NOT NULL THEN to_jsonb(repair) END AS repair,r.execution_ref AS receipt,r.kind,r.delivery,r.received_at,bo.id AS business_objective,
+ COALESCE(r.failure_reason,CASE WHEN r.delivery<>'accepted' THEN r.dispatch_hold END) AS failure_reason,CASE WHEN repair.revision IS NOT NULL THEN to_jsonb(repair) END AS repair,r.execution_ref AS receipt,r.kind,r.delivery,r.received_at,bo.id AS business_objective,
  CASE WHEN COALESCE(covered.owner_done_at,r.owner_done_at) IS NOT NULL OR (r.kind='create' AND c.status='done') THEN 'Done'
       WHEN COALESCE(covered.execution_phase,r.execution_phase) IS NOT NULL THEN COALESCE(covered.execution_phase,r.execution_phase)
-      WHEN COALESCE(covered.delivery,r.delivery)='accepted' THEN 'Queued' ELSE 'Pending' END AS work_status,
+      WHEN COALESCE(covered.delivery,r.delivery)='accepted' OR COALESCE(covered.dispatch_hold,r.dispatch_hold) IS NOT NULL THEN 'Queued' ELSE 'Pending' END AS work_status,
  r.execution_code,r.waiting_for_input,r.execution_updated_at,
  CASE WHEN bo.id IS NOT NULL THEN 'objective' WHEN assignment.value='global' THEN 'global' ELSE 'unassigned' END AS scope_kind,
  c.business_objective AS origin_business_objective,c.display_name AS task_title,
@@ -193,7 +193,7 @@ def pending_task(task, projects):
                          (UUID(str(task)), [UUID(str(p)) for p in projects])).fetchone()
     if not row:
         raise LookupError("Task not available")
-    return {"task_id":str(row["task_id"]), "codex_task_id":str(row["task_id"]),
+    return {"task_id":str(row["task_id"]), "codex_task_id":str(row["task_id"]), "task_number":row["task_number"],
             "title":row["task_title"] or row["label"], "project_id":str(row["project_id"]), "status":row["work_status"]}
 
 def pending_tasks(project):
@@ -201,5 +201,5 @@ def pending_tasks(project):
         rows=db.execute("SELECT DISTINCT ON(r.task_id) "+COLUMNS+SOURCE+
             " AND r.project_id=%s AND r.admission='created' AND c.id IS NULL ORDER BY r.task_id,r.received_at",
             (project,)).fetchall()
-    return [{"project_id":str(project),"task_id":str(r["task_id"]),"codex_task_id":str(r["task_id"]),
+    return [{"project_id":str(project),"task_id":str(r["task_id"]),"codex_task_id":str(r["task_id"]),"task_number":r["task_number"],
              "title":r["label"],"status":r["work_status"]} for r in rows]

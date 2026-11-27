@@ -30,7 +30,7 @@ def exercise():
     first, other, grant, owner = [uuid4() for _ in range(4)]
     with database() as db:
         for table in ("projects","objective_contract","objective_run","objective_presentation","acceptance_fixture",
-                      "conversation_submission","business_objective","external_mcp_grant"):
+                      "conversation_submission","business_objective","external_mcp_grant","command_center_project_tenant"):
             db.execute(sql.SQL("CREATE TABLE {} AS SELECT * FROM public.{} WITH NO DATA").format(
                 sql.Identifier(table),sql.Identifier(table)))
         db.execute("ALTER TABLE projects ADD PRIMARY KEY(id)")
@@ -39,7 +39,7 @@ def exercise():
         db.execute("INSERT INTO external_mcp_grant(id,project_ids,scopes,expires_at) VALUES(%s,%s,ARRAY['write'],now()+interval '1 hour')",(grant,[first,other]))
         db.execute("INSERT INTO business_objective(id) VALUES ('BO-01')")
         root=Path(intake.__file__).parent
-        for name in ("052_mcp_task_requests.sql","053_mcp_request_scope.sql","055_mcp_task_lifecycle.sql","059_mcp_intake.sql"):
+        for name in ("052_mcp_task_requests.sql","053_mcp_request_scope.sql","055_mcp_task_lifecycle.sql","059_mcp_intake.sql","061_taskboard_identity.sql"):
             db.execute((root/name).read_text().replace("CREATE TABLE IF NOT EXISTS workspace_screenshot","CREATE TABLE workspace_screenshot"))
     prompt="Correct duplicate delivery of checkout receipts when reconnecting the agent"
     def receive(project=first,text=prompt,title="Checkout receipt delivery",key=None,scope="global",request=None):
@@ -66,7 +66,7 @@ def exercise():
     keyed=receive(text="Correct spacing in narrow navigation menus",key="design/menus")
     assert receive(text="Also retain the keyboard focus ring",key="design/menus")["task_id"]==keyed["task_id"]
     client=ScopedTasks({"id":grant,"owner_id":owner,"project_ids":[first]},projects=lambda:[{"id":first,"name":"Test","status":"created"}],task_navigation=lambda:[])
-    with patch.object(client,"_workspace",side_effect=WorkspaceUnavailable("Offline")):
+    with patch.object(intake,"credential_service_ready",return_value=True),patch.object(client,"_workspace",side_effect=WorkspaceUnavailable("Offline")):
         receipt=client.create_task(first,"Correct sorting of the binary package inventory",uuid4(),scope="global")
         assert receipt["status"]=="Pending" and receipt["task_id"]==receipt["codex_task_id"]
         assert client.get_task(receipt["task_id"])["status"]=="Pending"
@@ -81,7 +81,7 @@ def exercise():
     def workspace(project,url,method,endpoint,*,payload):
         assert project==first and payload["newTask"] and payload["prompt"].endswith("inventory")
         return {"objective":receipt["task_id"],"conversationId":receipt["task_id"],"messageId":str(uuid4()),"executionId":"a"*24}
-    with patch("external_mcp_tasks.workspace_chat_request",workspace):
+    with patch.object(intake,"credential_service_ready",return_value=True),patch("external_mcp_tasks.workspace_chat_request",workspace):
         assert intake.retry_due()
     with database() as db:
         assert not db.execute("SELECT 1 FROM mcp_task_outbox WHERE request_id=%s",(receipt["request_id"],)).fetchone()
@@ -92,6 +92,20 @@ def exercise():
     with database() as db:
         db.execute("UPDATE objective_contract SET status='done' WHERE id=%s",(native,))
     assert receive(text="Repair scroll position in older receipts",scope="BO-01")["task_id"]!=native
+    with patch.object(intake,"credential_service_ready",return_value=False),patch.object(client,"_workspace") as dispatch:
+        held=client.create_task(first,"Show material purchase history in a compact table",uuid4(),scope="global")
+        assert held["status"]=="Queued" and held["task_number"].startswith("CC-")
+        dispatch.assert_not_called()
+        with database() as db:
+            db.execute("UPDATE mcp_task_outbox SET next_attempt=now() WHERE request_id=%s",(held["request_id"],))
+        assert not intake.retry_due()
+    with patch.object(intake,"credential_service_ready",return_value=True),patch("external_mcp_tasks.workspace_chat_request",
+        return_value={"objective":held["task_id"],"conversationId":held["task_id"],"messageId":str(uuid4()),"executionId":"b"*24}) as dispatch:
+        assert intake.retry_due()
+        dispatch.assert_called_once()
+    with database() as db:
+        saved=db.execute("SELECT delivery,dispatch_hold FROM mcp_task_request WHERE request_id=%s",(held["request_id"],)).fetchone()
+        assert saved=={"delivery":"accepted","dispatch_hold":None}
 
 
 if __name__=="__main__":

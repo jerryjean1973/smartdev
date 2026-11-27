@@ -147,11 +147,35 @@ def receive(project, request, kind, prompt, title, task, scope=None, *, work_key
         return row
 
 
+def credential_service_ready():
+    if not os.getenv("OPENBAO_ADDR") or os.getenv("SMD_PORTAL_TASK"):
+        return True
+    from vault import service_available
+    return service_available()
+
+
+def hold_for_credentials(project, request):
+    reason="Waiting for Command Center to regain access to tenant credentials. Delivery will retry automatically."
+    with database() as db:
+        row=db.execute("""UPDATE mcp_task_request r SET dispatch_hold=%s WHERE project_id=%s AND request_id=%s
+            AND delivery<>'accepted' AND EXISTS (SELECT 1 FROM mcp_task_outbox o
+              WHERE (o.project_id,o.request_id)=(r.project_id,r.request_id) AND o.grant_id IS NOT NULL)
+            RETURNING request_id""",(reason,project,request)).fetchone()
+    return reason if row else None
+
+
 def retry_due():
     from external_mcp_tasks import record_delivery, workspace_chat_request
     with database() as db:
         db.execute("""DELETE FROM mcp_task_outbox o USING mcp_task_request r
             WHERE (r.project_id,r.request_id)=(o.project_id,o.request_id) AND r.delivery='accepted'""")
+        db.execute("""UPDATE mcp_task_request r SET dispatch_hold=NULL,delivery='unconfirmed',
+            failure_reason='The original MCP authorization ended before delivery.' FROM mcp_task_outbox o
+            JOIN external_mcp_grant g ON g.id=o.grant_id
+            WHERE (r.project_id,r.request_id)=(o.project_id,o.request_id) AND r.dispatch_hold IS NOT NULL
+            AND (g.revoked_at IS NOT NULL OR g.expires_at<=now() OR NOT o.project_id=ANY(g.project_ids) OR NOT 'write'=ANY(g.scopes))""")
+        if not credential_service_ready():
+            return False
         row = db.execute("""WITH due AS (
             SELECT o.project_id,o.request_id,p.workspace_url FROM mcp_task_outbox o
             JOIN projects p ON p.id=o.project_id AND NOT p.archived

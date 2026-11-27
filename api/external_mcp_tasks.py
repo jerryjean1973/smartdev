@@ -191,6 +191,10 @@ class ScopedTasks(ScopedTaskReads):
         if row["delivery"] == "accepted":
             return {**answer,"conversation_id":str(row["task_id"]), "message_id":str(row["message_id"]),
                     "execution_id":row["execution_ref"], "status":row["execution_phase"] or "Queued"}
+        if self.grant_id and not mcp_intake.credential_service_ready():
+            reason=mcp_intake.hold_for_credentials(project_id,request_id)
+            if reason:
+                return {**answer,"status":"Queued","delivery":"received","detail":reason}
         if row["admission"] == "updated":
             target = {"objective":str(row["task_id"]), "conversationId":str(row["task_id"]), "waitingReply":False}
         try:

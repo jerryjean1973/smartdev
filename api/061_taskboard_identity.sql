@@ -19,6 +19,7 @@ ALTER TABLE mcp_task_request ADD COLUMN IF NOT EXISTS ingress_actor uuid;
 ALTER TABLE mcp_task_request ADD COLUMN IF NOT EXISTS ingress_client text;
 ALTER TABLE mcp_task_request ADD COLUMN IF NOT EXISTS ingress_tenant text;
 ALTER TABLE mcp_task_request ADD COLUMN IF NOT EXISTS failure_reason text;
+ALTER TABLE mcp_task_request ADD COLUMN IF NOT EXISTS dispatch_hold text;
 
 CREATE TABLE IF NOT EXISTS taskboard_repair (
     project_id uuid NOT NULL, request_id uuid NOT NULL, revision text NOT NULL CHECK(revision ~ '^[0-9a-f]{40}$'),
