@@ -469,3 +469,6 @@ body { margin: 0; }
 .wb-mcp-message > div { white-space:pre-wrap; overflow-wrap:anywhere; max-height:26rem; overflow:auto; }
 .wb-task-mcp { margin:4px 0; }
 .wb-mcp-inbox { min-width:0; }
+
+.compute-workbench{height:100dvh;display:flex;flex-direction:column;--line:#d4dfeb;--ink:#213950;--surface:white;--background:#f5f7fb;--muted:#55687b;--accent:#215fa9}
+.compute-workbench>section[hidden],.compute-workbench .wb-grid[hidden]{display:none!important}

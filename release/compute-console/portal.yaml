@@ -1,0 +1,3 @@
+services:
+  portal:
+    image: smartdev-portal:compute-console-20261127

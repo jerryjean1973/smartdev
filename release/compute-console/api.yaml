@@ -1,0 +1,3 @@
+services:
+  api:
+    image: smartdev-api:compute-console-20261127

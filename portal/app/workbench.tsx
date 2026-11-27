@@ -96,6 +96,9 @@ export default function Workbench({projects, createForm, signOut, updateProject,
   const [ccConversation, setCcConversation] = useState<{taskId?: string; title: string}>();
   useEffect(() => {
     const view = new URLSearchParams(window.location.search).get('view');
+    if (managementOnly && (!view || view==='deployments' || view==='tenants' || view==='environments')) {
+      setShowFleet(false); setShowTaskboard(false); setAdminTab(view==='tenants'?'tenants':'deployments'); setShowAdmin(true);
+    }
     if (view === 'taskboard') {
       setShowFleet(false);
       setShowAdmin(false);
@@ -533,8 +536,8 @@ export default function Workbench({projects, createForm, signOut, updateProject,
     setMenu('');
   }
 
-  return <div className="workbench" data-theme={prefs.dark ? 'dark' : 'light'}>
-    <header className="wb-toolbar">
+  return <div className={managementOnly && showAdmin && adminTab==='deployments' ? "compute-workbench" : "workbench"} data-theme={prefs.dark ? 'dark' : 'light'}>
+    {!(managementOnly && showAdmin && adminTab==='deployments') && <header className="wb-toolbar">
       <div className="wb-toolbar-group">
         <strong className="wb-brand"><span className="brand-mark" aria-hidden="true">S</span>SmartDev</strong>
         {!managementOnly && <><select className="wb-project-switch" aria-label="Select project" value={selected?.id || ''} onChange={event => {
@@ -600,7 +603,7 @@ export default function Workbench({projects, createForm, signOut, updateProject,
           </div>
         </details>}
       </div>
-    </header>
+    </header>}
     {ccConversation && <CcConversation key={ccConversation.taskId || 'main'} {...ccConversation}
       onClose={() => setCcConversation(undefined)} />}
     {managementOnly && <section hidden={!showFleet} aria-label={fleetPages[fleetView].label}>
@@ -638,7 +641,7 @@ export default function Workbench({projects, createForm, signOut, updateProject,
         }}
         style={{display: 'block', width: '100%', height: 'calc(100dvh - 56px)', border: 0}} />}
     </section>}
-    {showAdmin && <AdminProjects projects={projects} activeTab={managementOnly ? adminTab : undefined} />}
+    {showAdmin && <AdminProjects projects={projects} signOut={signOut} onAsk={()=>setCcConversation({title:'Main'})} activeTab={managementOnly ? adminTab : undefined} />}
     {showIntegrations && <Integrations projectId={selected?.id} repository={selected?.repository} onClose={() => setShowIntegrations(false)} />}
     <div className="wb-grid" hidden={showAdmin || (managementOnly && !showTaskboard)} style={{display: showAdmin || (managementOnly && !showTaskboard) ? 'none' : undefined, gridTemplateColumns: [
       ...(showProjects ? ['minmax(150px, min(' + prefs.left + 'px, 19vw))', '5px'] : []),

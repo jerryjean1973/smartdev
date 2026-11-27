@@ -1,6 +1,6 @@
 'use client';
 
-import {useEffect, useState, type FormEvent} from 'react';
+import {useEffect, useState, type ReactNode, type FormEvent} from 'react';
 
 type Project = {
   id: string;
@@ -11,7 +11,7 @@ type Project = {
   status: string;
 };
 
-import DeploymentActivity from './deployment-activity';
+import ComputeConsole from './compute-console';
 import {Download, Rocket, Server} from 'lucide-react';
 import styles from './deployment-console.module.css';
 
@@ -27,9 +27,10 @@ type Offer = {
   projects: {id: string; name: string; repository: string; revision: string}[];
 };
 
-export default function AdminProjects<T extends Project>({projects, activeTab}: {
+export default function AdminProjects<T extends Project>({projects, activeTab, signOut, onAsk}: {
   projects: T[];
   activeTab?: 'deployments' | 'tenants';
+  signOut?: ReactNode; onAsk?:()=>void;
 }) {
   const [localTab, setTab] = useState<'deployments' | 'tenants'>('deployments');
   const tab = activeTab ?? localTab;
@@ -146,27 +147,10 @@ export default function AdminProjects<T extends Project>({projects, activeTab}: 
     }
   }
 
-  return <section className="wb-content panel" aria-label="Command Center administration" style={{overflow: 'auto'}}>
-    {!activeTab && <div className={styles.adminTabs} role="tablist" aria-label="Command Center administration"
-      onKeyDown={event => {
-        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-        event.preventDefault();
-        const next = event.key === 'Home' ? 'deployments' : event.key === 'End' ? 'tenants'
-          : tab === 'deployments' ? 'tenants' : 'deployments';
-        setTab(next);
-        event.currentTarget.querySelector<HTMLButtonElement>('#admin-tab-' + next)?.focus();
-      }}>
-      <button id="admin-tab-deployments" type="button" role="tab" aria-controls="admin-panel-deployments"
-        aria-selected={tab === 'deployments'} tabIndex={tab === 'deployments' ? 0 : -1}
-        onClick={() => setTab('deployments')}>Deployments</button>
-      <button id="admin-tab-tenants" type="button" role="tab" aria-controls="admin-panel-tenants"
-        aria-selected={tab === 'tenants'} tabIndex={tab === 'tenants' ? 0 : -1}
-        onClick={() => setTab('tenants')}>Tenants</button>
-    </div>}
-    <div id="admin-panel-deployments" role="tabpanel" aria-label={activeTab ? "Deployments" : undefined} aria-labelledby={activeTab ? undefined : "admin-tab-deployments"} hidden={tab !== 'deployments'}>
+  const deploymentForm=(
     <section id="deployment-console" className={styles.console} aria-labelledby="deployment-console-title">
       <header className={styles.header}>
-        <div className={styles.title}><Server size={19} aria-hidden /><h2 id="deployment-console-title">Deployment console</h2></div>
+        <div className={styles.title}><Server size={19} aria-hidden /><h2 id="deployment-console-title">Deployment configuration</h2></div>
         <div className={styles.targetActions}>
           <label className={styles.picker}>Target tenant
             <select value={target} disabled={!assignments || !selected.length}
@@ -181,7 +165,6 @@ export default function AdminProjects<T extends Project>({projects, activeTab}: 
           </button>
         </div>
       </header>
-      {tab === 'deployments' && <DeploymentActivity />}
       <div className={styles.tableScroll}>
         <table className={styles.projectTable}>
           <thead><tr>
@@ -237,6 +220,26 @@ export default function AdminProjects<T extends Project>({projects, activeTab}: 
         {deploymentMessage && <p role="status">{deploymentMessage}</p>}
       </section>
     </section>
+  );
+  return <section className={tab==='deployments'?styles.computeHost:"wb-content panel"} aria-label="Command Center administration" style={{overflow: 'auto'}}>
+    {!activeTab && <div className={styles.adminTabs} role="tablist" aria-label="Command Center administration"
+      onKeyDown={event => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const next = event.key === 'Home' ? 'deployments' : event.key === 'End' ? 'tenants'
+          : tab === 'deployments' ? 'tenants' : 'deployments';
+        setTab(next);
+        event.currentTarget.querySelector<HTMLButtonElement>('#admin-tab-' + next)?.focus();
+      }}>
+      <button id="admin-tab-deployments" type="button" role="tab" aria-controls="admin-panel-deployments"
+        aria-selected={tab === 'deployments'} tabIndex={tab === 'deployments' ? 0 : -1}
+        onClick={() => setTab('deployments')}>Deployments</button>
+      <button id="admin-tab-tenants" type="button" role="tab" aria-controls="admin-panel-tenants"
+        aria-selected={tab === 'tenants'} tabIndex={tab === 'tenants' ? 0 : -1}
+        onClick={() => setTab('tenants')}>Tenants</button>
+    </div>}
+    <div id="admin-panel-deployments" role="tabpanel" aria-label={activeTab ? "Deployments" : undefined} aria-labelledby={activeTab ? undefined : "admin-tab-deployments"} hidden={tab !== 'deployments'}>
+    {tab==='deployments' && <ComputeConsole deploymentForm={deploymentForm} signOut={signOut} onAsk={onAsk}/>}
     </div>
     <div id="admin-panel-tenants" role="tabpanel" aria-label={activeTab ? "Tenants" : undefined} aria-labelledby={activeTab ? undefined : "admin-tab-tenants"} hidden={tab !== 'tenants'}>
     <h2>Tenant administration</h2>

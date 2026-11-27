@@ -144,3 +144,11 @@
 .projectName { display: inline-flex; align-items: center; gap: .55rem; }
 .projectName a { display: inline-flex; align-items: center; justify-content: center; border-radius: 5px; padding: .2rem; color: #a7d6ff; }
 .projectName a:hover, .projectName a:focus-visible { background: #26364b; }
+
+.computeHost{height:100%;min-height:0;flex:1;background:#f3f6fa}.computeHost>div[role=tabpanel]:not([hidden]){height:100%}
+:global(dialog) .console{margin:0;border:0;border-radius:0;background:#f8fafd;color:#233951;--console-line:#d5deea;--console-muted:#4e647c}
+:global(dialog) .console :is(input,select){background:white;color:#233951;border:1px solid #bfcddd;border-radius:4px;padding:5px;max-width:100%}
+:global(dialog) .projectTable thead{background:#eef3f9;color:#435c76}:global(dialog) .console button{background:#2464bf;color:white}:global(dialog) .console button:disabled{background:#d3deeb;color:#51657b}
+:global(dialog) .title svg,:global(dialog) .projectName a{color:#245fa6}
+
+.computeHost{margin:0}.computeHost:global([aria-label]){padding:0}.computeHost :global(dialog section){margin-top:0}
