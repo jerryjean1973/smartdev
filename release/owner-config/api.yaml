@@ -1,0 +1,3 @@
+services:
+  api:
+    image: smartdev-api:managed-config-20261127

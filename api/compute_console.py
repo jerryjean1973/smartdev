@@ -11,11 +11,21 @@ INVENTORY = """
         t.release_revision,t.queued_at,t.updated_at,t.reconciled_at,t.region,t.plan,t.dns_zone,
         t.deployment_hostname,t.note,t.installer_sha256,t.observed_revision,
         a.version AS assignment_version,a.portal_account,
+        (SELECT count(*) FROM smd_tenant_default_secret x WHERE x.tenant_id=a.tenant_id) AS tenant_default_count,
+        CASE WHEN c.id IS DISTINCT FROM smd_admin_tenant_id() THEN 'tenant'
+             WHEN t.status!='deployed' OR t.reconciled_at IS NOT NULL THEN 'inactive'
+             WHEN i.owner_version=a.version AND i.instance_id=t.instance_id THEN 'owner_active'
+             ELSE 'owner_pending' END AS configuration_state,
+        (SELECT COALESCE(jsonb_object_agg(env.project_id::text,env.domains),'{}'::jsonb) FROM
+            (SELECT d.project_id,jsonb_object_agg(d.environment,d.hostname) AS domains
+             FROM smd_custom_preview d WHERE d.task_id=t.id AND d.assignment_version=a.version
+             GROUP BY d.project_id) env) AS custom_domains,
         (a.portal_ready_instance=t.instance_id OR r.connections->>'portal_access'='owner-pkce-v1') IS TRUE AS portal_ready,c.id AS tenant_id,c.name AS tenant_name,
         r.enrolled_at,r.verified_at,
         CASE WHEN r.verified_at IS NOT NULL THEN r.connections END AS connections
  FROM smd_deploy_task t JOIN projects p ON p.id=t.project_id
  JOIN smd_deployment_assignment a ON a.task_id=t.id
+ LEFT JOIN smd_install_identity i ON i.task_id=t.id
  LEFT JOIN command_center_tenant c ON c.id=a.tenant_id
  LEFT JOIN smd_deploy_receipt r ON r.task_id=t.id AND r.instance_id=t.instance_id
 """
@@ -40,7 +50,7 @@ def inventory():
     # Build metadata belongs to the installer. Only publish the fields displayed by the console.
     for row in rows:
         row["project_manifest"] = [
-            {key: project[key] for key in ("id", "name", "repository", "revision") if key in project}
+            {key: project[key] for key in ("id", "name", "repository", "revision", "hostname", "preview_hostname", "tenant_setup") if key in project}
             for project in row["project_manifest"] or []
         ]
     return {"deployments": rows, "tenants": tenants}
@@ -119,11 +129,30 @@ def assign(task_id: UUID, body: Assignment):
             raise HTTPException(422, "Choose a registered tenant.")
         if tenant["id"] == current["tenant_id"]:
             return current
+        live=db.execute("""SELECT t.status,t.instance_id,t.reconciled_at,r.connections->>'portal_url' AS portal,
+                          i.public_key,t.dns_zone FROM smd_deploy_task t LEFT JOIN smd_deploy_receipt r
+                          ON r.task_id=t.id AND r.instance_id=t.instance_id AND r.verified_at IS NOT NULL
+                          LEFT JOIN smd_install_identity i ON i.task_id=t.id AND i.instance_id=t.instance_id
+                          WHERE t.id=%s""",(task_id,)).fetchone()
+        staged=None
+        if live["status"]=="deployed" and not live["reconciled_at"]:
+            expected=f"https://smd-{task_id.hex}.{live['dns_zone']}"
+            if not live["public_key"] or (live["portal"] or "").rstrip("/")!=expected:
+                raise HTTPException(409,"Enroll this installation before handing it to a tenant.")
+            from smd_tenant_access import stage_generation
+            staged=stage_generation(live,task_id,current["version"]+1)
         updated = db.execute(
             """UPDATE smd_deployment_assignment SET tenant_id=%s,version=version+1
                              WHERE task_id=%s RETURNING tenant_id,version""",
             (tenant["id"], task_id),
         ).fetchone()
+        if staged:
+            db.execute("""UPDATE smd_install_identity SET public_key=%s,
+                 owner_version=CASE WHEN %s=smd_admin_tenant_id() THEN %s ELSE NULL END WHERE task_id=%s""",
+                 (staged,tenant["id"],updated["version"],task_id))
+            db.execute("DELETE FROM smd_portal_launch WHERE task_id=%s",(task_id,))
+            db.execute("""INSERT INTO smd_deployment_event(task_id,kind,label) VALUES
+                  (%s,'configuration','Recreated tenant portal login and rebound assigned default secrets')""",(task_id,))
         db.execute(
             """INSERT INTO smd_deployment_event(task_id,kind,label,previous_tenant,next_tenant)
                       VALUES (%s,'assignment','Owner changed tenant assignment',%s,%s)""",

@@ -36,7 +36,7 @@ def finish():
                 (project["id"], project["name"], project["repository"], project["runtime"], url))
             if project.get("hostname"):
                 db.execute("""INSERT INTO project_preview_url(project_id,environment,mode,url) VALUES (%s,'DEV','url',%s)
-                    ON CONFLICT(project_id,environment) DO NOTHING""",(project["id"],"https://"+project["hostname"]+"/"))
+                    ON CONFLICT(project_id,environment) DO NOTHING""",(project["id"],"https://"+(project.get("preview_hostname") or project["hostname"])+"/"))
             db.execute("""INSERT INTO audit (project_id,action) SELECT %s,'standalone:workspace-verified'
                 WHERE NOT EXISTS (SELECT 1 FROM audit WHERE project_id=%s AND action='standalone:workspace-verified')""",
                 (project["id"], project["id"]))

@@ -11,14 +11,14 @@ from uuid import UUID
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.background import BackgroundTask
 import httpx
 from pydantic import BaseModel, Field
 
 from github import app_token
 from smd_receipts import decode
-from smd_product_context import approved_context, approved_qa_environment
+from smd_product_context import approved_context
 from smd_git_ssh import build_bundle, key_for
 from store import database
 
@@ -93,8 +93,7 @@ def issue(task_id: UUID, body: GitTokenRequest):
         if not recorded:
             raise HTTPException(409, "Git credential request was already used.")
     if body.artifact == "qa-runtime":
-        return Response(approved_qa_environment(project), media_type="application/x-smd-runtime-env",
-                        headers={"Cache-Control": "private, no-store"})
+        raise HTTPException(410,"Owner credentials are available only through assignment-bound configuration.")
     if body.artifact == "build-context":
         return FileResponse(approved_context(project), media_type="application/gzip",
                             headers={"Cache-Control": "private, no-store"})

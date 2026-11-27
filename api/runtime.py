@@ -103,6 +103,16 @@ def resolve_runtime(project_id: UUID, body: RuntimeRequest):
         return {"ok":True}
     with database() as db:
         bindings=record(db,project_id,"DEV")["secret_bindings"]
+    generation=None
+    import os
+    if os.getenv("SMD_ASSIGNMENT_AUTHORITY"):
+        from smd_owner_client import owner_json
+        generation=owner_json(project_id,"portal-generation")["version"]
+        incoming=owner_json(project_id,"tenant-bindings")["names"]
+        if incoming or bindings:
+            from store import queue
+            queue().set(f"smd:runtime-values:{generation}:{project_id}","1")
+        bindings={**{s["name"]:s["name"] for s in incoming if s["environment"]=="DEV" and SAFE.fullmatch(s["name"]) and not RESERVED.match(s["name"])},**bindings}
     values={}
     missing=[]
     for target,name in bindings.items():
@@ -115,4 +125,6 @@ def resolve_runtime(project_id: UUID, body: RuntimeRequest):
     if bindings:
         with database() as db:
             db.execute("INSERT INTO audit(project_id,action) VALUES (%s,'runtime:resolve:DEV')",(project_id,))
+    if generation is not None and owner_json(project_id,"portal-generation")["version"]!=generation:
+        raise HTTPException(409,"The tenant assignment changed during runtime configuration.")
     return {"values":values if not missing else {}, "missing":missing}

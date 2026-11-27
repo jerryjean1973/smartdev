@@ -8,6 +8,9 @@ import re
 import subprocess
 import tarfile
 import tempfile
+import sys
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"api"))
+from smd_export_policy import RELEASE_FILES, TEMPLATE, additions
 
 SOURCE = Path(__file__).resolve().parents[1] / "release" / "smd"
 IMAGES = {
@@ -118,6 +121,7 @@ def main():
     parser.add_argument("--model-store", type=Path, help="Ollama model directory with qwen2.5:1.5b")
     parser.add_argument("--workspace-browser", type=Path, default=Path("/opt/smartdev-workspace-tools/chromium"),
                         help="Unpacked, architecture-matched Chromium and wget release runtime")
+    parser.add_argument("--dns-zone",default="smd.youkandoit.com",help="Approved managed domain suffix")
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", args.revision):
         parser.error("Expected a simple release identifier")
@@ -135,15 +139,23 @@ def main():
         images = local_image_ids(references) if args.offline else references
         with output.open("wb", buffering=0) as target, tarfile.open(
                 fileobj=target, mode="w", format=tarfile.GNU_FORMAT) as archive:
-            for source in sorted(SOURCE.iterdir()):
-                if not source.is_file() or source.name == "architect-compose.yaml":
+            for name in sorted(RELEASE_FILES):
+                source=SOURCE/name
+                if source.is_symlink():
+                    raise ValueError("Linked release source")
+                if source.name == "architect-compose.yaml":
                     continue
                 if source.name == "compose.yaml" and args.model_store:
                     config = b"include: [architect-compose.yaml]\n" + source.read_bytes()
                     add_bytes(archive, source.name, config)
                 elif args.model_store or source.name != "architect.py":
                     add_bytes(archive, source.name, source.read_bytes())
-            for template in sorted((SOURCE / "coder-template").iterdir()):
+            for name,body in additions(args.dns_zone).items():
+                add_bytes(archive,name,body)
+            for template_name in sorted(TEMPLATE):
+                template=SOURCE/"coder-template"/template_name
+                if template.is_symlink():
+                    raise ValueError("Linked template source")
                 add_bytes(archive, f"coder-template/{template.name}", template.read_bytes())
             add_workspace_tools(archive,args.workspace_browser,temporary)
             profiles = SOURCE.parents[1] / "workspace" / "security"
@@ -163,6 +175,9 @@ def main():
                 add_docker_archive(archive, references)
         with output.open("rb") as staged:
             digest = hashlib.file_digest(staged, "sha256").hexdigest()
+        if args.offline:
+            proof=args.output.resolve().parent/("clean-"+digest+".json")
+            subprocess.run([sys.executable,str(Path(__file__).with_name("attest-smd-export.py")),str(output),digest,str(proof)],check=True)
         args.output.hardlink_to(output)
         print(digest)
 

@@ -1,4 +1,6 @@
 """Pack a compiled Next portal and verified installer helpers for managed workspaces."""
+import json
+from smd_portal_components import components
 import gzip
 import io
 from pathlib import Path
@@ -25,6 +27,8 @@ def package(build,root):
             compiled.append((".next/"+name.as_posix(),entry.read_bytes()))
     scripts=root/"release"/"smd"
     files=[(name,(scripts/name).read_bytes()) for name in ("managed_workspace.py","enroll-api.py","apps.py")]
+    packed=json.dumps({p.name:p.read_text() for p in components(root/"scripts")},separators=(",",":")).encode()
+    files.append(("portal-components.gz",gzip.compress(packed,mtime=0)))
     (root/"api"/"smd_workbench.tar.gz").write_bytes(tar([*files,("next.tar.gz",tar(compiled))]))
 
 if __name__=="__main__":

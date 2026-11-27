@@ -1331,3 +1331,7 @@
 .downloads select { max-width: 100%; }
 .downloads a { font-weight: 600; color: var(--blue); }
 .defaultOwner { margin: 12px 17px 0; }
+
+.domainList { min-width: 12rem; max-width: 23rem; }
+.domainList a, .domainList code { font-size: .78rem; overflow-wrap: anywhere; white-space: normal; }
+.domainList small { display: block; }

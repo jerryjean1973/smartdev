@@ -288,6 +288,7 @@ def deploy_selection(body: GroupDeployment):
         task_id = uuid4()
         zone = offer["dns_zone"]
         for row in manifest:
+            row["preview_hostname"] = f"dev-{UUID(row['id']).hex[:12]}-{task_id.hex[:12]}.{zone}"
             row["hostname"] = f"app-{UUID(row['id']).hex[:12]}-{task_id.hex[:12]}.{zone}"
         return db.execute(f"""
             INSERT INTO smd_deploy_task (

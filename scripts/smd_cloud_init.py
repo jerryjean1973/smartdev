@@ -48,7 +48,7 @@ manifest_path, ip_path = sys.argv[1:]
 with open(manifest_path) as source:
     manifest = json.load(source)
 hosts = [manifest["deployment_hostname"], manifest["coder_hostname"],
-         *(project["hostname"] for project in manifest["projects"])]
+         *(host for project in manifest["projects"] for host in (project["hostname"],project.get("preview_hostname")) if host)]
 if hosts:
     deadline = time.monotonic() + 900
     while time.monotonic() < deadline:
@@ -200,18 +200,6 @@ run_installer() {
         [[ $(cat "$work/revision") == "$revision" ]]
 }
 run_installer || { echo 'Pinned SMD installation or health verification failed.' >&2; exit 1; }
-python3 - "$work" "$portal_receiver_files" <<'PY_PORTAL_FILES'
-from base64 import b64decode
-from gzip import decompress
-import json
-from pathlib import Path
-import sys
-target = Path(sys.argv[1])
-for name, contents in json.loads(decompress(b64decode(sys.argv[2], validate=True))).items():
-    if name not in {"portal_handoff.py", "deployment_portal_receiver.py", "enroll_deployment_portal.py", "development.py", "041_frozen_business_objectives.sql"}:
-        raise SystemExit("Unknown portal enrollment component.")
-    (target / name).write_text(contents)
-PY_PORTAL_FILES
 if [[ -n "$workbench_url" ]]; then
     assets="/opt/smartdev/$project_id/data/workbench/$workbench_sha256"
     install -d -m 0700 "$assets"
@@ -221,12 +209,26 @@ if [[ -n "$workbench_url" ]]; then
 import sys,tarfile
 with tarfile.open(sys.argv[1]) as archive:
     members=archive.getmembers()
-    if len(members)!=4 or not all(m.isfile() for m in members) or {m.name for m in members}!={"apps.py","enroll-api.py","managed_workspace.py","next.tar.gz"}:
+    if len(members)!=5 or not all(m.isfile() for m in members) or {m.name for m in members}!={"apps.py","enroll-api.py","managed_workspace.py","next.tar.gz","portal-components.gz"}:
         raise SystemExit("Unexpected managed workbench package")
     archive.extractall(sys.argv[2],filter="data")
 PY_WORKBENCH
+    cp "$assets/portal-components.gz" "$work/portal-components.gz"
     python3 "$assets/managed_workspace.py" "$project_id" "$workbench_sha256"
 fi
+python3 - "$work" "$portal_receiver_files" <<'PY_PORTAL_FILES'
+from base64 import b64decode
+from gzip import decompress
+import json
+from pathlib import Path
+import sys
+target = Path(sys.argv[1])
+payload=b64decode(sys.argv[2],validate=True) if sys.argv[2] else (target/"portal-components.gz").read_bytes()
+for name, contents in json.loads(decompress(payload)).items():
+    if name not in {"smd_handoff_cleanup.py","runtime.py","smd_portal_generation.py","vault.py","smd_custom_ingress.py","domains.py","challenge_engine.py","smd_owner_client.py","smd_preview_domains.py","codex_access.py","preview.py","portal_handoff.py", "deployment_portal_receiver.py", "enroll_deployment_portal.py", "development.py", "041_frozen_business_objectives.sql"}:
+        raise SystemExit("Unknown portal enrollment component.")
+    (target / name).write_text(contents)
+PY_PORTAL_FILES
 python3 "$work/enroll_deployment_portal.py" "$project_id" "$task_id" "$instance_id" \
     "$portal_issuer" "https://$deployment_hostname" "$work"
 
@@ -252,7 +254,7 @@ apps = manifest["projects"]
 observed = json.loads(Path(evidence).read_text())
 def identity(app):
     return (app["id"], app["revision"], app["hostname"], app.get("build_context_sha256", ""),
-            app.get("tenant_setup", False), app.get("verify_installation", False))
+            app.get("tenant_setup", False), app.get("verify_installation", False),app.get("preview_hostname",""))
 
 if sorted(map(identity, observed)) != sorted(map(identity, apps)):
     raise SystemExit("The installer did not verify every approved project revision and build context.")
@@ -276,6 +278,8 @@ for app in apps:
         checks.append((app["hostname"], "/.well-known/smartdev-installation", app["revision"]))
     else:
         checks.append((app["hostname"], "/", None))
+    if app.get("preview_hostname"):
+        checks.append((app["preview_hostname"],checks[-1][1],checks[-1][2]))
 for hostname, route, marker in checks:
     for _ in range(40):
         reply = subprocess.run(
@@ -302,11 +306,17 @@ for app in apps:
         if probe.returncode or not probe.stdout.startswith("2"):
             runtime[app["id"]] = "runtime_unverified"
 
+key_path=Path("/opt/smartdev")/project_id/"data/portal-access/installation.pem"
+public=subprocess.check_output(["openssl","pkey","-in",str(key_path),"-pubout","-outform","DER"])
+if len(public)!=44 or public[:12]!=bytes.fromhex("302a300506032b6570032100"):
+    raise SystemExit("Invalid installation identity")
 connections = {
+    "installation_key": b64encode(public[12:]).decode("ascii"),
     "portal_access": "owner-pkce-v1",
     "ipv4": ipv4, "ssh_user": "root", "portal_url": f"https://{portal}", "coder_url": f"https://{coder}",
     "apps": [{"project_id": app["id"], "revision": app["revision"],
               **({"runtime_status": runtime[app["id"]]} if app["id"] in runtime else {}),
+              **({"preview_url":"https://"+app["preview_hostname"]} if app.get("preview_hostname") else {}),
               "url": f"https://{app['hostname']}"} for app in apps],
 }
 canonical = json.dumps(connections, sort_keys=True, separators=(",", ":"))
@@ -383,6 +393,7 @@ def cloud_init(claim, callback_url, private_key, *, ingress=None, upstream_tls=N
         "revision": project["revision"],
         "runtime": project["runtime"],
         "hostname": project["hostname"],
+        **({"preview_hostname":project["preview_hostname"]} if project.get("preview_hostname") else {}),
         **({"build_context_sha256": project["build_context_sha256"]} if "build_context_sha256" in project else {}),
         **({"qa_runtime": True} if project.get("qa_runtime_versions") else {}),
         **({"tenant_setup": True} if project.get("tenant_setup") is True else {}),
@@ -400,8 +411,7 @@ def cloud_init(claim, callback_url, private_key, *, ingress=None, upstream_tls=N
             raise ValueError("Invalid QA recovery public key.")
         recovery_key = " ".join(recovery_key.split()[:2])
     scripts = Path(__file__).resolve().parent
-    components = [scripts / "enroll_deployment_portal.py",
-                  scripts.parent / "api" / "041_frozen_business_objectives.sql", scripts.parent / "api" / "development.py", scripts.parent / "api" / "deployment_portal_receiver.py", scripts.parent / "api" / "portal_handoff.py"]
+    from smd_portal_components import components
     workbench_url = ""
     workbench_digest = ""
     installer_path = urlsplit(installer_url)
@@ -409,11 +419,11 @@ def cloud_init(claim, callback_url, private_key, *, ingress=None, upstream_tls=N
         with (scripts.parent/"api"/"smd_workbench.tar.gz").open("rb") as archive:
             workbench_digest = file_digest(archive,"sha256").hexdigest()
         workbench_url = installer_url.rsplit("/",1)[0]+"/workbench-"+workbench_digest+".tar.gz"
-    packed = json.dumps({p.name: p.read_text() for p in components}, separators=(",", ":")).encode()
+    packed = json.dumps({p.name: p.read_text() for p in components(scripts)}, separators=(",", ":")).encode()
     callback = urlsplit(https_url(callback_url))
     variables = {
         "workbench_sha256":workbench_digest, "workbench_url":workbench_url,
-        "portal_receiver_files": base64.b64encode(gzip.compress(packed, mtime=0)).decode(),
+        "portal_receiver_files": "" if workbench_url else base64.b64encode(gzip.compress(packed, mtime=0)).decode(),
         "portal_issuer": https_url(f"https://{callback.netloc}", origin=True),
         "recovery_key": recovery_key or "",
         "recovery_ingress": str(IPv4Address(ingress)) if recovery_key else "",

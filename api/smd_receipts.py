@@ -34,10 +34,12 @@ class AppConnection(BaseModel, extra="forbid"):
     project_id: UUID
     revision: str = Field(pattern=r"^[0-9a-f]{40}$")
     url: str = Field(max_length=300)
+    preview_url: str | None = Field(default=None,max_length=300)
     runtime_status: Literal["awaiting_tenant_configuration", "runtime_unverified"] | None = None
 
 
 class Connections(BaseModel, extra="forbid"):
+    installation_key: str | None = Field(default=None,min_length=44,max_length=44)
     portal_access: Literal["owner-pkce-v1"] | None = None
     ipv4: IPv4Address
     ssh_user: Literal["root", "ubuntu"]
@@ -77,6 +79,12 @@ def connections_match(job, enrolled, connections):
             return False
         project = projects.get(app.project_id)
         if not project or app.revision != project["revision"]:
+            return False
+        preview=project.get("preview_hostname")
+        if preview:
+            if preview!=f"dev-{app.project_id.hex[:12]}-{task[:12]}.{zone}" or app.preview_url!=f"https://{preview}":
+                return False
+        elif app.preview_url is not None:
             return False
         if project.get("tenant_setup"):
             if app.runtime_status != "awaiting_tenant_configuration":
@@ -171,6 +179,9 @@ def receive(task_id: UUID, body: Receipt):
             Ed25519PublicKey.from_public_bytes(row["public_key"]).verify(signature, message)
         except (InvalidSignature, ValueError):
             raise HTTPException(403, "Invalid deployment signature.") from None
+        if connections and connections.get("installation_key") and not row["verified_at"]:
+            from smd_owner_config import bind
+            bind(db, task_id, row["instance_id"], decode(connections["installation_key"],32))
         db.execute("""
             UPDATE smd_deploy_receipt SET signature=%s,verified_at=now(),connections=%s
             WHERE task_id=%s AND verified_at IS NULL

@@ -37,10 +37,14 @@ def add_domain(project_id: UUID, body: DomainRequest):
     host = validate(body.hostname)
     with database() as db:
         project(db, project_id)
+        from smd_preview_domains import managed_hosts
+        from smd_owner_client import owner_json
+        managed=str(project_id) in managed_hosts()
+        challenge=owner_json(project_id,"domain-challenge",{"hostname":host})["challenge"] if managed else secrets.token_urlsafe(24)
         existing = db.execute(f"""
             INSERT INTO project_domain(hostname,project_id,challenge) VALUES (%s,%s,%s)
             ON CONFLICT(hostname) DO NOTHING RETURNING {FIELDS}
-        """, (host, project_id, secrets.token_urlsafe(24))).fetchone()
+        """, (host, project_id, challenge)).fetchone()
         if existing:
             db.execute("INSERT INTO audit(project_id,action) VALUES (%s,%s)", (project_id, "domain:reserve:" + host))
             return existing
@@ -48,6 +52,9 @@ def add_domain(project_id: UUID, body: DomainRequest):
                               (host, project_id)).fetchone()
         if not existing:
             raise HTTPException(409, "This hostname is already reserved.")
+        if managed and existing["challenge"]!=challenge:
+            existing=db.execute(f"""UPDATE project_domain SET challenge=%s,verified_at=NULL WHERE project_id=%s AND hostname=%s RETURNING {FIELDS}""",
+                (challenge,project_id,host)).fetchone()
         return existing
 
 
@@ -76,6 +83,8 @@ def verify_domain(project_id: UUID, hostname: str):
             raise HTTPException(409, "The reservation changed during verification.")
         db.execute("INSERT INTO audit(project_id,action) VALUES (%s,%s)",
                    (project_id, ("domain:verified:" if confirmed else "domain:unverified:") + host))
+        from smd_preview_domains import domain_candidate
+        domain_candidate(db,project_id,host,row["challenge"],confirmed)
         return updated
 
 

@@ -45,6 +45,11 @@ def expected_hosts(claim, zone):
         if project.get("hostname") != hostname:
             raise DNSBlocked("A project application hostname differs from the pinned deployment hostname.")
         hosts.append(hostname)
+        if "preview_hostname" in project:
+            preview=f"dev-{project_key[:12]}-{task[:12]}.{zone}"
+            if project["preview_hostname"]!=preview:
+                raise DNSBlocked("DEV preview hostname differs from the pinned deployment.")
+            hosts.append(preview)
     if len(hosts) != len(set(hosts)) or any(len(host) > 253 for host in hosts):
         raise DNSBlocked("The pinned deployment hostnames contain duplicate or oversized names.")
     return hosts

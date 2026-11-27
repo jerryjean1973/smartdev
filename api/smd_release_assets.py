@@ -32,6 +32,11 @@ def release_asset(capability: str, filename: str):
         file = version / filename
     if workspace:
         file = Path(__file__).with_name("smd_workbench.tar.gz")
+        history=os.getenv("SMARTDEV_SMD_VERSIONED_INSTALLERS")
+        if history:
+            pinned=Path(history)/"workbenches"/(workspace[1]+".tar.gz")
+            if not pinned.is_symlink() and pinned.is_file():
+                file=pinned
         if file.is_file():
             with file.open("rb") as source:
                 if not compare_digest(workspace[1],file_digest(source,"sha256").hexdigest()):

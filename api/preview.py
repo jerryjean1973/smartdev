@@ -27,6 +27,10 @@ def project(db, project_id):
 def previews(project_id: UUID):
     with database() as db:
         project(db, project_id)
+        from smd_preview_domains import managed_previews
+        managed=managed_previews(project_id)
+        if managed:
+            return managed
         rows = db.execute("SELECT environment,mode,url FROM project_preview_url WHERE project_id=%s",
                           (project_id,)).fetchall()
     return {row["environment"]:{"mode":row["mode"],"url":row["url"]} for row in rows}
@@ -44,6 +48,9 @@ def save_preview(project_id: UUID, environment: ENV, body: PreviewConfig):
             raise HTTPException(422,"Use an application origin separate from the SmartDev portal.")
     with database() as db:
         project(db, project_id)
+        from smd_preview_domains import managed_hosts,change_managed_preview
+        if str(project_id) in managed_hosts():
+            return change_managed_preview(db,project_id,environment,url)
         db.execute("""INSERT INTO project_preview_url(project_id,environment,mode,url) VALUES (%s,%s,%s,%s)
             ON CONFLICT(project_id,environment) DO UPDATE SET mode=EXCLUDED.mode,url=EXCLUDED.url""",
                    (project_id,environment,body.mode,url))

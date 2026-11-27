@@ -50,6 +50,12 @@ def load_manifest(path):
                 raise ValueError("Invalid or duplicate project hostname")
             seen_hosts.add(hostname)
             entry["hostname"] = hostname
+        preview=item.get("preview_hostname")
+        if preview:
+            if not hostname or not hostname.startswith("app-") or preview!="dev-"+hostname[4:] or preview in seen_hosts:
+                raise ValueError("Invalid managed DEV hostname")
+            entry["preview_hostname"]=preview
+            seen_hosts.add(preview)
         selected.append(entry)
         seen_ids.add(id_)
     return selected

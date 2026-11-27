@@ -38,6 +38,17 @@ def audit(project_id, action, scope, name):
 
 
 def call(method, route, body=None, missing=False):
+    # Only the assigned scope is reachable through normal project secret paths.
+    # Tenant defaults are looked up on demand and are never copied into the local KV store.
+    scope_match=re.fullmatch(r"(data|metadata|delete)/projects/([a-f0-9-]{36})/(DEV|QA|PREPROD|PROD)(?:/([A-Z_][A-Z0-9_]{0,95}))?(\?version=\d+)?",route)
+    inherited=None
+    if scope_match and os.getenv("SMD_ASSIGNMENT_AUTHORITY"):
+        from smd_owner_client import owner_json
+        kind,project,env,name,query=scope_match.groups()
+        generation=owner_json(project,"portal-generation")["version"]
+        route=f"{kind}/projects/{project}/{env}/assignment-{generation}"+("/"+name if name else "")+(query or "")
+        if method=="GET" and missing and kind=="data" and name and not query:
+            inherited=(project,env,name,generation)
     address = os.getenv("OPENBAO_ADDR", "")
     if not address:
         raise HTTPException(503, "OpenBao is awaiting configuration.")
@@ -47,6 +58,11 @@ def call(method, route, body=None, missing=False):
             response = client.request(method, address.rstrip("/") + "/v1/smartdev/" + route,
                                       headers={"X-Vault-Token": token}, json=body)
         if response.status_code == 404 and missing:
+            if inherited:
+                project,env,name,generation=inherited
+                value=owner_json(project,"tenant-secret",{"name":name,"environment":env,"version":generation})
+                if value.get("present"):
+                    return {"data":{"data":{"value":value["value"]}}}
             return None
         if response.status_code == 400 and method == "POST" and route.startswith("data/"):
             raise HTTPException(409, "Secret version changed or the vault rejected the write. Refresh and retry.")

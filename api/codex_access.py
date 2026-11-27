@@ -88,6 +88,11 @@ def check_code(code):
         raise HTTPException(502, "OpenAI is unavailable or rejected the Codex request.")
 
 
+def deployment_credential(project_id):
+    from smd_owner_client import enrolled
+    return None if enrolled() else credential(project_id)
+
+
 def verify_provider_key(key):
     key = validate_key(key)
     try:
@@ -110,7 +115,12 @@ def verify_provider_key(key):
 @router.post("/workspace-memory/{project_id}/codex-access")
 def preflight(project_id: UUID, run: RunAccess):
     active_run(project_id, run)
-    verify_provider_key(credential(project_id))
+    key=deployment_credential(project_id)
+    if key is None:
+        from smd_owner_client import owner_json
+        owner_json(project_id,"codex-models")
+    else:
+        verify_provider_key(key)
     try:
         bearer = secrets.token_urlsafe(32)
         queue().set("smartdev:codex-bearer:" + bearer,
@@ -134,7 +144,7 @@ def authorize_call(project_id, authorization):
     if project != str(project_id):
         raise HTTPException(403, "Codex session belongs to another project.")
     active_run(project_id, RunAccess.model_validate(run))
-    return credential(project_id)
+    return deployment_credential(project_id)
 
 
 @router.post("/workspace-memory/{project_id}/codex/v1/responses")
@@ -147,8 +157,17 @@ async def model_response(project_id: UUID, request: Request):
         payload.extend(chunk)
     client = httpx.AsyncClient(timeout=httpx.Timeout(180, connect=8), follow_redirects=False, trust_env=False)
     try:
-        response = await client.send(client.build_request("POST", OPENAI + "/responses", content=bytes(payload),
-            headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"}), stream=True)
+        if key is None:
+            from smd_owner_client import keys,signed_request
+            for key_file in keys():
+                url,headers=signed_request(project_id,"codex-responses",bytes(payload),key_file)
+                response=await client.send(client.build_request("POST",url,content=bytes(payload),headers=headers),stream=True)
+                if response.status_code!=403 or response.headers.get("x-smd-identity")!="superseded":
+                    break
+                await response.aclose()
+        else:
+            response=await client.send(client.build_request("POST",OPENAI+"/responses",content=bytes(payload),
+                headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"}),stream=True)
         if not 200 <= response.status_code < 300:
             retry = response.headers.get("retry-after", "")
             status = response.status_code

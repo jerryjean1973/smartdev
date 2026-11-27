@@ -160,18 +160,15 @@ def run():
                     assert delivery.path == archive and delivery.media_type == "application/gzip"
                     rejects(409, git_tokens.issue, grouped, typed)
                     mint.assert_called_once()
-                    rejects(403, git_tokens.issue, grouped, signed_context("e" * 64, "qa-runtime"))
+                    rejects(410, git_tokens.issue, grouped, signed_context("e" * 64, "qa-runtime"))
                     (store / "qa-required.json").write_text('["CUSTOMER_OPENAI_API_KEY"]')
                     db.execute("""UPDATE smd_deploy_task SET project_manifest=jsonb_set(
                         project_manifest,'{0,qa_runtime_versions}','{"CUSTOMER_OPENAI_API_KEY":2}') WHERE id=%s""", (grouped,))
                     runtime_request = signed_context("f" * 64, "qa-runtime")
                     with patch("vault.call", return_value={"data": {"data": {"value": "fixture-app-key"},
                             "metadata": {"version": 2}}}) as scoped, patch("vault.audit"):
-                        response = git_tokens.issue(grouped, runtime_request)
-                        assert response.media_type == "application/x-smd-runtime-env"
-                        assert response.headers["cache-control"] == "private, no-store"
-                        assert b"OPENAI_API_KEY=fixture-app-key\n" in response.body
-                        scoped.assert_called_once_with("GET", f"data/projects/{second_project}/QA/CUSTOMER_OPENAI_API_KEY?version=2", missing=True)
+                        rejects(410, git_tokens.issue, grouped, runtime_request)
+                        scoped.assert_not_called()
                         rejects(409, git_tokens.issue, grouped, runtime_request)
             connection = {
                 "ipv4": "8.8.8.8", "ssh_user": "root", "portal_url": f"https://smd-{grouped.hex}.{zone}",

@@ -33,6 +33,7 @@ import {
   X,
 } from 'lucide-react';
 import s from './compute-console.module.css';
+import DeploymentConfiguration from "./deployment-configuration";
 import DeploymentLogin from './deployment-login';
 import { DockerDownload, type DockerExport, type DownloadProject } from './docker-download';
 
@@ -44,7 +45,7 @@ type App = {
   runtime_status?: 'awaiting_tenant_configuration' | 'runtime_unverified';
 };
 type Links = { ipv4: string; portal_url: string; coder_url: string; ssh_user: string; apps: App[] };
-type Project = { id: string; name: string; repository: string; revision: string; tenant_setup?: boolean };
+type Project = { id: string; name: string; repository: string; revision: string; hostname?: string; preview_hostname?: string; tenant_setup?: boolean };
 type Job = {
   id: string;
   project_id: string;
@@ -63,7 +64,10 @@ type Job = {
   note: string | null;
   installer_sha256: string | null;
   observed_revision: string | null;
+  tenant_default_count?: number;
   assignment_version: number;
+  configuration_state?: 'owner_active' | 'owner_pending' | 'tenant' | 'inactive';
+  custom_domains?: Record<string, Partial<Record<'DEV'|'QA'|'PREPROD'|'PROD', string>>>;
   portal_account: string;
   tenant_id: string | null;
   tenant_name: string | null;
@@ -112,6 +116,31 @@ function Chip({ children }: { children: string }) {
       {children}
     </span>
   );
+}
+function configuration(j: Job) {
+  return ({owner_active:'Owner integrations active',owner_pending:'Owner access awaiting enrollment',
+    tenant:'Tenant credentials',inactive:'No active configuration'} as const)[j.configuration_state || 'inactive'];
+}
+function DeploymentDomains({job}:{job:Job}) {
+  const projects=job.project_manifest || [];
+  if (!projects.some(p=>p.hostname)) return <small>DNS unavailable</small>;
+  return <div className={s.domainList}>{job.deployment_hostname && <div><small>SMD portal</small><code>{job.deployment_hostname}</code></div>}{projects.map(p=>{
+    if (!p.hostname) return null;
+    const link=job.connections?.apps.find(a=>a.project_id===p.id);
+    const active=!!link && job.status==='deployed' && !job.reconciled_at;
+    const custom=job.custom_domains?.[p.id] || {};
+    const origins=new Map<string,string[]>();
+    for (const env of ['PROD','DEV','QA','PREPROD'] as const) {
+      const host=custom[env] || (env==='DEV' && p.preview_hostname) || p.hostname;
+      origins.set(host,[...(origins.get(host)||[]),env==='PROD'?'App':env]);
+    }
+    return <div key={p.id}>{projects.length>1 && <strong>{p.name}</strong>}
+      {[...origins].map(([host,env])=><div key={host}><small>{env.join(' / ')} · {host===p.hostname || host===p.preview_hostname?'Managed':'Custom'}</small>
+        {active?<a href={'https://'+host+'/'} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()}>{host}</a>:<code>{host}</code>}
+      </div>)}
+      {!active && <small>Awaiting verification</small>}
+    </div>;
+  })}</div>;
 }
 function readiness(j: Job) {
   const apps = j.connections?.apps || [];
@@ -245,7 +274,7 @@ function Assign({
         {tenant !== (job.tenant_id || '') && (
           <p>
             Confirm the change from <b>{job.tenant_name || 'Unassigned'}</b> to <b>{newName}</b>. Verified
-            connection discovery follows this assignment.
+            connection discovery follows this assignment. The new tenant receives a fresh portal password and its own default secrets. Your Command Center portal access continues.
           </p>
         )}
         {error && <p role="alert">{error}</p>}
@@ -297,8 +326,9 @@ function Details({
   tab,
   setTab,
   history,
-  onAssign,
+  onAssign,tenants,
 }: {
+  tenants:Tenant[];
   job: Job;
   tab: Tab;
   setTab: (t: Tab) => void;
@@ -388,6 +418,9 @@ function Details({
                   </small>
                 )}
               </Field>
+              <Field label="Configuration">{configuration(job)}</Field>
+              <Field label="DNS &amp; HTTPS">{job.verified_at && !job.reconciled_at ? "Checked at installation · "+date.format(new Date(job.verified_at))+" Toronto" : "Awaiting verification"}</Field>
+              <Field label="Application & preview domains"><DeploymentDomains job={job} /></Field>
               <Field label="Last updated">{date.format(new Date(job.updated_at))} Toronto</Field>
               <Field label="Installation verified">
                 {job.verified_at && date.format(new Date(job.verified_at)) + ' Toronto'}
@@ -452,6 +485,8 @@ function Details({
               )}
               action={links && !job.reconciled_at && job.status === 'deployed' ? <DeploymentLogin taskId={job.id} /> : null}
             />
+            <DeploymentConfiguration key={job.id+'-'+job.assignment_version} task={job.id} assigned={job.tenant_id}
+              tenants={tenants} active={job.status==='deployed' && !job.reconciled_at} />
             <Connection
               title="Coder"
               url={links?.coder_url}
@@ -478,6 +513,7 @@ function Details({
             {links && (
               <div className={s.ssh}>
                 SSH <CopyValue value={'ssh ' + links.ssh_user + '@' + links.ipv4} label="SSH command" />
+                PuTTY <CopyValue value={'putty -ssh ' + links.ssh_user + '@' + links.ipv4} label="PuTTY command" />
               </div>
             )}
           </>
@@ -1115,7 +1151,8 @@ export default function ComputeConsole({
                   <tr>
                     <th aria-label="Select deployment" />
                     <th>Project</th>
-                    <th>Assigned tenant</th>
+                    <th>Tenant &amp; configuration</th>
+                    <th>Application &amp; preview domains</th>
                     <th>Status</th>
                     <th>VM / Public IP</th>
                     <th>SMD release</th>
@@ -1148,7 +1185,8 @@ export default function ComputeConsole({
                           {j.region ? ' · ' + j.region.toUpperCase() : ''}
                         </small>
                       </td>
-                      <td className={!j.tenant_name ? s.muted : ''}>{j.tenant_name || 'Unassigned'}</td>
+                      <td className={!j.tenant_name ? s.muted : ''}>{j.tenant_name || 'Unassigned'}<small>{configuration(j)}</small>{j.configuration_state==='tenant' && <small>{j.tenant_default_count || 0} tenant defaults</small>}</td>
+                      <td><DeploymentDomains job={j} /></td>
                       <td>
                         <Chip>{state(j)}</Chip>
                         {j.status === 'deployed' && j.verified_at && !j.reconciled_at && (
@@ -1227,7 +1265,7 @@ export default function ComputeConsole({
           {active && (
             <div ref={detail}>
               <Details
-                job={active}
+                job={active} tenants={tenants}
                 tab={tab}
                 setTab={setTab}
                 history={history}

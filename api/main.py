@@ -148,7 +148,9 @@ async def protect(request: Request, call_next):
         return await call_next(request)
     if request.method == "GET" and re.fullmatch(ASSET_ROUTE, request.url.path):
         return await call_next(request)
-    if request.method == "POST" and re.fullmatch(r"/smd-deploy-tasks/[a-f0-9-]{36}/(?:receipt|git-token)", request.url.path):
+    if request.method=="GET" and request.url.path=="/smd-configuration-authority":
+        return await call_next(request)
+    if request.method == "POST" and re.fullmatch(r"/smd-deploy-tasks/[a-f0-9-]{36}/(?:receipt|git-token|configuration)", request.url.path):
         return await call_next(request)
     expected_origin = coding_origin if coding_origin and request.headers.get("host") == coding_origin[8:] else origin
     if request.method not in ("GET", "HEAD") and request.headers.get("origin") != expected_origin:
@@ -303,6 +305,10 @@ def archive(project_id: UUID):
     return {"ok": True}
 
 from compute_console import router as compute_console_router
+from smd_owner_config import router as smd_owner_router
+from smd_tenant_access import router as smd_tenant_router
+app.include_router(smd_tenant_router)
+app.include_router(smd_owner_router)
 app.include_router(compute_console_router)
 app.include_router(memory_router)
 app.include_router(github_router)

@@ -149,6 +149,22 @@ def provider_key(project, provider):
 
 def request_role(project, role, instructions, evidence, schema):
     assigned = configured_marketplace_role(role, project)
+    from smd_owner_client import enrolled,owner_json
+    if enrolled() and not assigned:
+        # A tenant's own configured provider always takes precedence.
+        try:
+            provider,model=provider_config(role,project)
+            key=provider_key(project,provider)
+        except ProviderFailure:
+            from fastapi import HTTPException
+            try:
+                requested=instructions+"\nReturn JSON matching this schema: "+json.dumps(schema.model_json_schema())
+                reply=owner_json(project,"model",{"role":role,"instructions":requested,
+                    "prompt":clean(json.dumps(evidence,ensure_ascii=False),150000)})
+                return schema.model_validate_json(reply["output"]).model_dump(),reply["usage"]
+            except (HTTPException,ValidationError,KeyError):
+                raise ProviderFailure("Configure the role integration for this deployment.") from None
+        return request_provider(project,provider,model,instructions,evidence,schema,key=key)
     if not assigned:
         provider, model = provider_config(role, project)
         return request_provider(project, provider, model, instructions, evidence, schema)

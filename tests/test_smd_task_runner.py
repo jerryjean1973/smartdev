@@ -312,6 +312,11 @@ exec """ + sys.executable + ' "$@"\n')
         script = bootstrap(claim())
         evidence = self.root / "smd" / PROJECT / "data" / "verified-projects.json"
         evidence.parent.mkdir(parents=True)
+        identity=evidence.parent/"portal-access"/"installation.pem"
+        identity.parent.mkdir()
+        subprocess.run(["openssl","genpkey","-algorithm","Ed25519","-out",identity],check=True)
+        identity_der=subprocess.check_output(["openssl","pkey","-in",identity,"-pubout","-outform","DER"])
+        installation_key=base64.b64encode(identity_der[12:]).decode()
         evidence.write_text(json.dumps(claim()["projects"]))
         subprocess.run(["bash"], input=script, env=environment, check=True, timeout=10)
         receipt = json.loads(captured.read_text())
@@ -323,7 +328,7 @@ exec """ + sys.executable + ' "$@"\n')
         signature = self.root / "signature"
         signature.write_bytes(base64.b64decode(receipt["signature"]))
         message = self.root / "message"
-        expected = {"portal_access": "owner-pkce-v1", "ipv4": IPV4, "ssh_user": "root", "portal_url": f"https://{PORTAL}",
+        expected = {"installation_key":installation_key,"portal_access": "owner-pkce-v1", "ipv4": IPV4, "ssh_user": "root", "portal_url": f"https://{PORTAL}",
                     "coder_url": f"https://{CODER}",
                     "apps": [{"project_id": PROJECT, "revision": APP_REVISION, "url": f"https://{APP}"}]}
         self.assertEqual(receipt["connections"], expected)

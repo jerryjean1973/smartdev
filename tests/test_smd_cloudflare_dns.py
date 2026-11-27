@@ -82,6 +82,19 @@ class CloudflareDNSTest(unittest.TestCase):
             self.assign()
         self.assertEqual(self.provider.writes, [])
 
+    def test_managed_dev_origins_are_scoped_to_each_project_and_deployment(self):
+        from uuid import uuid4
+        second=str(uuid4())
+        entries=[]
+        for project in (PROJECT,second):
+            part=UUID(project).hex[:12]+"-"+UUID(TASK).hex[:12]+"."+ZONE
+            entries.append({"id":project,"hostname":"app-"+part,"preview_hostname":"dev-"+part})
+        hosts=expected_hosts({**CLAIM,"projects":entries},ZONE)
+        self.assertEqual(len(set(hosts)),6)
+        entries[0]["preview_hostname"]=entries[1]["preview_hostname"]
+        with self.assertRaises(DNSBlocked):
+            expected_hosts({**CLAIM,"projects":entries},ZONE)
+
     def test_zone_and_hostname_mismatches_and_nonpublic_ip_are_rejected(self):
         self.provider.zone = "unconfigured.example.test"
         with self.assertRaisesRegex(DNSBlocked, "active DNS zone"):
