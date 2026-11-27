@@ -68,3 +68,4 @@ def development(project_id: UUID):
 @router.post("/projects/{project_id}/development")
 def lifecycle(project_id: UUID, body: Transition):
     return workspace_request(project_id, body.action)
+

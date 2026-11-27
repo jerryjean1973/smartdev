@@ -14,9 +14,17 @@ from pydantic import BaseModel, Field, field_validator
 
 from core import REPOSITORY, issue_session, password_digest, project_token, valid_session
 from store import database, notify, queue
+from mcp_request_history import router as mcp_request_history_router
 from codex_access import router as codex_access_router
 from coder_session import BRIDGE, revoke, router as coder_session_router
 from development import router as development_router
+from cc_codex import router as cc_codex_router
+from coder_inventory import router as coder_inventory_router
+from smd_deployment import router as smd_deployment_router
+from smd_receipts import router as smd_receipts_router
+from smd_git_tokens import router as smd_git_tokens_router
+from smd_release_assets import ASSET_ROUTE, router as smd_release_assets_router
+from smd_stack_export import router as smd_stack_export_router
 from conversations import router as conversations_router
 from runtime import router as runtime_router
 from project_mcp import router as project_mcp_router
@@ -41,6 +49,8 @@ async def lifespan(app):
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 origin = os.environ["PORTAL_ORIGIN"].rstrip("/")
+coding_origin = (os.getenv("CODER_PUBLIC_URL", "").rstrip("/")
+                 if os.getenv("SMARTDEV_ENABLE_CODING_HOST") == "1" else "")
 session_key = bytes.fromhex(os.environ["SESSION_KEY"])
 memory_key = bytes.fromhex(os.environ["MEMORY_ACCESS_KEY"])
 salt, stored_digest = os.environ["OWNER_PASSWORD_HASH"].split(":")
@@ -92,7 +102,7 @@ async def protect(request: Request, call_next):
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
         return response
-    scoped = re.fullmatch(r"/workspace-memory/([a-f0-9-]{36})(?:/governance|/codex-access|/conversation|/preview-runtime|/mcp-bindings|/operator-task)?", request.url.path)
+    scoped = re.fullmatch(r"/workspace-memory/([a-f0-9-]{36})(?:/governance|/codex-access|/conversation|/preview-runtime|/mcp-bindings|/operator-task|/screenshots|/git-credential)?", request.url.path)
     if "x-smartdev-acceptance" in request.headers and not (scoped and request.url.path.endswith("/conversation")):
         acceptance_scope = re.fullmatch(
             r"/projects/([a-f0-9-]{36})/(?:objectives|preview|development|dev-publishing)(?:/[^/]+){0,2}"
@@ -123,7 +133,12 @@ async def protect(request: Request, call_next):
         return await call_next(request)
     if request.url.path == BRIDGE and request.method in ("OPTIONS", "POST"):
         return await call_next(request)
-    if request.method not in ("GET", "HEAD") and request.headers.get("origin") != origin:
+    if request.method == "GET" and re.fullmatch(ASSET_ROUTE, request.url.path):
+        return await call_next(request)
+    if request.method == "POST" and re.fullmatch(r"/smd-deploy-tasks/[a-f0-9-]{36}/(?:receipt|git-token)", request.url.path):
+        return await call_next(request)
+    expected_origin = coding_origin if coding_origin and request.headers.get("host") == coding_origin[8:] else origin
+    if request.method not in ("GET", "HEAD") and request.headers.get("origin") != expected_origin:
         return JSONResponse({"detail": "Invalid request origin"}, 403)
     if request.url.path not in ("/health", "/login", DEV_GATEWAY_AUTH):
         if not valid_session(request.cookies.get("__Host-command", ""), session_key):
@@ -196,6 +211,41 @@ def projects():
     with database() as db:
         return db.execute("SELECT p.* FROM projects p WHERE NOT EXISTS (SELECT 1 FROM acceptance_fixture f WHERE f.project_id=p.id) ORDER BY p.created_at DESC").fetchall()
 
+class TenantAssignment(BaseModel, extra="forbid"):
+    tenant_name: str = Field(max_length=80)
+
+
+@app.get("/admin/project-tenants")
+def project_tenants():
+    with database() as db:
+        rows = db.execute("SELECT project_id, tenant_name FROM command_center_project_tenant").fetchall()
+    return {str(row["project_id"]): row["tenant_name"] for row in rows}
+
+
+@app.put("/admin/project-tenants/{project_id}")
+def assign_project_tenant(project_id: UUID, body: TenantAssignment):
+    name = body.tenant_name.strip()
+    with database() as db:
+        row = db.execute("""
+            SELECT id FROM projects WHERE id=%s AND NOT EXISTS (
+                SELECT 1 FROM acceptance_fixture WHERE project_id=projects.id
+            ) FOR UPDATE
+        """, (project_id,)).fetchone()
+        if row is None:
+            raise HTTPException(404, "Project not available.")
+        if name:
+            db.execute("""
+                INSERT INTO command_center_project_tenant (project_id, tenant_name)
+                VALUES (%s, %s) ON CONFLICT (project_id)
+                DO UPDATE SET tenant_name=EXCLUDED.tenant_name
+            """, (project_id, name))
+        else:
+            db.execute("DELETE FROM command_center_project_tenant WHERE project_id=%s", (project_id,))
+        db.execute("INSERT INTO audit (project_id, action) VALUES (%s, %s)",
+                   (project_id, "command-center:tenant-assignment"))
+    return {"tenant_name": name}
+
+
 @app.put("/projects/{project_id}", status_code=202)
 def create(project_id: UUID, body: Project):
     with database() as db:
@@ -240,6 +290,13 @@ app.include_router(github_router)
 app.include_router(governance_router)
 
 app.include_router(development_router)
+app.include_router(cc_codex_router)
+app.include_router(coder_inventory_router)
+app.include_router(smd_deployment_router)
+app.include_router(smd_receipts_router)
+app.include_router(smd_git_tokens_router)
+app.include_router(smd_release_assets_router)
+app.include_router(smd_stack_export_router)
 
 app.include_router(vault_router)
 
@@ -251,6 +308,7 @@ from external_mcp_grants import router as external_mcp_grants_router
 app.include_router(external_mcp_grants_router)
 from external_mcp_transport import router as external_mcp_transport_router
 app.include_router(external_mcp_transport_router)
+app.include_router(mcp_request_history_router)
 import operator_task  # Register task routes on the existing operator router.
 from operator_dispatch import router as operator_dispatch_router
 app.include_router(operator_dispatch_router)
@@ -271,3 +329,6 @@ app.include_router(integrations_router)
 
 from deploy_keys import router as deploy_keys_router
 app.include_router(deploy_keys_router)
+
+from workspace_screenshots import router as workspace_screenshots_router
+app.include_router(workspace_screenshots_router)

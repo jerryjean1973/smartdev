@@ -6,6 +6,7 @@ from uuid import UUID, uuid5
 
 import httpx
 
+import mcp_request_history as history
 from core import workspace_name
 from external_mcp_read import ScopedTaskReads
 from store import database
@@ -16,11 +17,61 @@ class WorkspaceUnavailable(Exception):
     pass
 
 
+def workspace_chat_request(project_id, workspace_url, method, endpoint, *, params=None, payload=None, timeout=25):
+    address = urlsplit(workspace_url or "")
+    public = urlsplit(os.environ["CODER_PUBLIC_URL"])
+    path = address.path.rstrip("/")
+    expected = r"/@[A-Za-z0-9_-]+/" + re.escape(workspace_name(project_id))
+    if ((address.scheme, address.netloc) != (public.scheme, public.netloc)
+            or address.query or address.fragment or not re.fullmatch(expected, path)):
+        raise WorkspaceUnavailable("The project workspace is unavailable.")
+    try:
+        with httpx.Client(base_url=os.environ["CODER_API_URL"], timeout=timeout,
+                          trust_env=False, follow_redirects=False) as client:
+            response = client.request(method, path + "/apps/codex-chat/" + endpoint,
+                                      params=params, json=payload,
+                                      headers={"Coder-Session-Token": os.environ["CODER_TOKEN"],
+                                               "Sec-Fetch-Site": "same-origin"})
+        if response.status_code in (409, 422):
+            detail = response.json().get("error")
+            raise WorkspaceUnavailable(detail if isinstance(detail, str) else "The task could not accept this request.")
+        if response.status_code not in (200, 202):
+            raise WorkspaceUnavailable("The workspace could not complete this request.")
+        result = response.json()
+        if not isinstance(result, dict):
+            raise ValueError("Invalid workspace response")
+        return result
+    except (httpx.HTTPError, ValueError, KeyError):
+        raise WorkspaceUnavailable("The workspace could not confirm the request. Retry with the same request ID.") from None
+
+
+
 class ScopedTasks(ScopedTaskReads):
     def __init__(self, grant, **sources):
         super().__init__(grant["project_ids"], **sources)
         self.grant_id = grant.get("id")
         self.owner_id = UUID(str(grant["owner_id"]))
+
+    def release_dev(self, project_id, grant, ticket):
+        from operator_task import Dispatch, RELEASE_OPERATION, SignedGrant, dispatch, release_project
+        from fastapi import HTTPException
+        from fastapi.encoders import jsonable_encoder
+
+        project = self._require_project(project_id)
+        approved = SignedGrant.model_validate(grant)
+        if approved.operation != RELEASE_OPERATION or project != release_project() or approved.project_id != project:
+            raise LookupError("Release unavailable")
+        request = Dispatch(
+            approval_id=approved.id, task_id=approved.task_id, execution_id=approved.execution_id,
+            environment=approved.environment, operation=approved.operation,
+            workspace=approved.workspace, revision=approved.revision, ticket=ticket, grant=approved,
+        )
+        try:
+            return jsonable_encoder(dispatch(project, request))
+        except HTTPException as error:
+            if error.status_code != 403:
+                raise
+            return jsonable_encoder(error.detail)
 
     def inspect_dev_portal(self, project_id):
         from operator_dispatch import inspect_portal
@@ -98,68 +149,56 @@ class ScopedTasks(ScopedTaskReads):
     def get_task(self, task_id):
         return self._task_details(super().get_task(task_id))
 
+    def get_receipt(self, receipt):
+        from fastapi.encoders import jsonable_encoder
+        return jsonable_encoder(history.lookup(receipt, self.project_ids))
+
     def _workspace(self, project_id, method, endpoint, *, params=None, payload=None):
         project = next((row for row in self.projects() if UUID(str(row["id"])) == project_id
                         and not row.get("archived")), None)
-        address = urlsplit((project or {}).get("workspace_url") or "")
-        public = urlsplit(os.environ["CODER_PUBLIC_URL"])
-        path = address.path.rstrip("/")
-        expected = r"/@[A-Za-z0-9_-]+/" + re.escape(workspace_name(project_id))
-        if ((address.scheme, address.netloc) != (public.scheme, public.netloc)
-                or address.query or address.fragment or not re.fullmatch(expected, path)):
-            raise WorkspaceUnavailable("The project workspace is unavailable.")
-        try:
-            with httpx.Client(base_url=os.environ["CODER_API_URL"], timeout=25,
-                              trust_env=False, follow_redirects=False) as client:
-                response = client.request(method, path + "/apps/codex-chat/" + endpoint,
-                                          params=params, json=payload,
-                                          headers={"Coder-Session-Token": os.environ["CODER_TOKEN"],
-                                                   "Sec-Fetch-Site": "same-origin"})
-            if response.status_code in (409, 422):
-                detail = response.json().get("error")
-                raise WorkspaceUnavailable(detail if isinstance(detail, str) else "The task could not accept this request.")
-            if response.status_code not in (200, 202):
-                raise WorkspaceUnavailable("The workspace could not complete this request.")
-            result = response.json()
-            if not isinstance(result, dict):
-                raise ValueError("Invalid workspace response")
-            return result
-        except (httpx.HTTPError, ValueError, KeyError):
-            raise WorkspaceUnavailable("The workspace could not confirm the request. Retry with the same request ID.") from None
+        return workspace_chat_request(project_id, (project or {}).get("workspace_url"), method, endpoint,
+                                      params=params, payload=payload)
 
-    def _submit(self, project_id, client_request_id, prompt, **target):
+    def _submit(self, project_id, client_request_id, prompt, scope=None, **target):
         if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 30000:
             raise ValueError("Invalid instruction")
         request_id = uuid5(self.owner_id, "smartdev-mcp:" + str(UUID(str(client_request_id))))
-        result = self._workspace(project_id, "POST", "run", payload={
-            "tree": "repository", "files": [], "requestId": str(request_id), "prompt": prompt, **target,
-        })
+        kind = "create" if target.get("newTask") else "reply" if target.get("waitingReply") else "message"
+        history.received(project_id,request_id,kind,prompt,target.get("title"),target.get("objective"),scope)
         try:
-            return {"task_id": result["objective"], "conversation_id": result["conversationId"],
+            result = self._workspace(project_id, "POST", "run", payload={
+                "tree": "repository", "files": [], "requestId": str(request_id), "prompt": prompt, **target,
+            })
+            reply = {"task_id": result["objective"], "conversation_id": result["conversationId"],
                     "message_id": result["messageId"], "execution_id": result["executionId"],
+                    "request_id": str(request_id),
                     "status": result.get("status", "running"),
                     **({"instruction_document_id": result["instructionDocumentId"]}
                        if result.get("instructionDocumentId") else {})}
-        except KeyError:
-            raise WorkspaceUnavailable("The workspace could not confirm execution. Retry with the same request ID.") from None
+        except (KeyError, WorkspaceUnavailable) as error:
+            history.delivered(project_id,request_id)
+            detail = str(error) if isinstance(error, WorkspaceUnavailable) else "Workspace confirmation unavailable."
+            raise WorkspaceUnavailable(f"{detail} Taskboard request {request_id}.") from None
+        history.delivered(project_id,request_id,reply)
+        return reply
 
-    def create_task(self, project_id, instructions, client_request_id, title=None):
+    def create_task(self, project_id, instructions, client_request_id, title=None, scope=None):
         project_id = self._require_project(project_id)
         if title is not None and (not isinstance(title, str) or len(title.strip()) > 100 or not valid_title(title.strip())):
             raise ValueError("Invalid title")
-        return self._submit(project_id, client_request_id, instructions, newTask=True,
+        return self._submit(project_id, client_request_id, instructions, scope=scope, newTask=True,
                             title=title.strip() if title else None)
 
-    def _send(self, task_id, message, client_request_id, waiting):
+    def _send(self, task_id, message, client_request_id, waiting, scope):
         task = super().get_task(task_id)
-        return self._submit(UUID(task["project_id"]), client_request_id, message,
+        return self._submit(UUID(task["project_id"]), client_request_id, message, scope=scope,
                             objective=task["task_id"], conversationId=task["task_id"], waitingReply=waiting)
 
-    def send_message(self, task_id, message, client_request_id):
-        return self._send(task_id, message, client_request_id, False)
+    def send_message(self, task_id, message, client_request_id, scope=None):
+        return self._send(task_id, message, client_request_id, False, scope)
 
-    def reply_to_waiting_task(self, task_id, message, client_request_id):
-        return self._send(task_id, message, client_request_id, True)
+    def reply_to_waiting_task(self, task_id, message, client_request_id, scope=None):
+        return self._send(task_id, message, client_request_id, True, scope)
 
     def get_latest_response(self, task_id):
         task = super().get_task(task_id)

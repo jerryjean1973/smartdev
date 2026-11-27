@@ -256,9 +256,13 @@ def conversation(project_id: UUID, body: Action, request: Request):
                     raise HTTPException(409, "The submission belongs to another execution environment.")
                 return {"message_id": prior["message_id"], "result": prior["result"], "claimed": False, "conversation_id": target}
             if body.action == "accepted":
-                db.execute("""UPDATE conversation_submission SET result=%s
-                              WHERE conversation_id=%s AND request_id=%s AND result IS NULL""",
-                           (Jsonb(body.result), target, body.request_id))
+                saved = db.execute("""UPDATE conversation_submission SET result=%s
+                              WHERE conversation_id=%s AND request_id=%s AND result IS NULL
+                              RETURNING task_project_id,environment,message_id""",
+                           (Jsonb(body.result), target, body.request_id)).fetchone()
+                if saved and saved["environment"] == "user" and saved["task_project_id"] == project_id:
+                    from mcp_request_history import confirm_submission
+                    confirm_submission(db, project_id, body.request_id, saved["message_id"], body.result)
             elif body.action == "release":
                 db.execute("""UPDATE conversation_submission SET released=true
                               WHERE conversation_id=%s AND request_id=%s AND result IS NULL""",

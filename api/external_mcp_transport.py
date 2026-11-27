@@ -27,10 +27,14 @@ def tool(name, description, properties, required=(), *, write=False):
 
 UUID_FIELD = {"type": "string", "format": "uuid"}
 TEXT_FIELD = {"type": "string", "minLength": 1, "maxLength": 30000}
+SCOPE_FIELD = {"type": "string", "description": "Work scope for this request: global for platform-wide work, an existing BO ID, or unassigned."}
 MESSAGE_FIELDS = {"task_id": UUID_FIELD, "message": TEXT_FIELD, "client_request_id": UUID_FIELD}
-WRITE_TOOLS = {"smartdev_create_task", "smartdev_send_message", "smartdev_reply_to_waiting_task"}
+RELEASE_TOOL = "smartdev_dev_release"
+WRITE_TOOLS = {"smartdev_create_task", "smartdev_send_message", "smartdev_reply_to_waiting_task", RELEASE_TOOL}
 
 TOOLS = [
+    tool("smartdev_get_receipt", "Look up an MCP task write by its public execution receipt or Taskboard request ID.",
+         {"receipt": {"type":"string"}}, ("receipt",)),
     tool("smartdev_inspect_dev_portal", "Inspect the enrolled SmartDev DEV portal via the Ubuntu operator",
          {"project_id": UUID_FIELD}, ("project_id",)),
     tool("smartdev_list_projects", "List authorized SmartDev projects", {}),
@@ -42,13 +46,22 @@ TOOLS = [
     tool("smartdev_get_latest_response", "Read the latest visible Codex response for a task",
          {"task_id": UUID_FIELD}, ("task_id",)),
     tool("smartdev_create_task", "Create and start one SmartDev task. Reuse the same client request UUID on retry.",
-         {"project_id": UUID_FIELD, "title": {"type": "string"}, "instructions": TEXT_FIELD,
+         {"project_id": UUID_FIELD, "title": {"type": "string"}, "instructions": TEXT_FIELD, "scope": SCOPE_FIELD,
           "client_request_id": UUID_FIELD}, ("project_id", "instructions", "client_request_id"), write=True),
     tool("smartdev_send_message", "Send a follow-up to an existing task. Reuse the same client request UUID on retry.",
-         MESSAGE_FIELDS, tuple(MESSAGE_FIELDS), write=True),
+         {**MESSAGE_FIELDS, "scope": SCOPE_FIELD}, tuple(MESSAGE_FIELDS), write=True),
     tool("smartdev_reply_to_waiting_task", "Resume a task stopped awaiting a user reply. Reuse the same client request UUID on retry.",
-         MESSAGE_FIELDS, tuple(MESSAGE_FIELDS), write=True),
+         {**MESSAGE_FIELDS, "scope": SCOPE_FIELD}, tuple(MESSAGE_FIELDS), write=True),
 ]
+
+
+def release_tool():
+    from operator_task import SignedGrant
+
+    return tool(RELEASE_TOOL, "Queue or retrieve one signed SmartDev DEV release. Reuse the grant and ticket to retrieve its receipt.",
+                {"project_id": UUID_FIELD, "grant": SignedGrant.model_json_schema(),
+                 "ticket": {"type": "string", "minLength": 43, "maxLength": 128}},
+                ("project_id", "grant", "ticket"), write=True)
 
 
 def dispatch(message, reads):
@@ -73,17 +86,21 @@ def dispatch(message, reads):
     elif method == "ping":
         result = {}
     elif method == "tools/list":
-        result = {"tools": TOOLS}
+        from operator_task import release_project
+
+        result = {"tools": [*TOOLS, release_tool()] if release_project() else TOOLS}
     elif method == "tools/call":
         handlers = {
             "smartdev_inspect_dev_portal": lambda **args: reads.inspect_dev_portal(**args),
             "smartdev_list_projects": reads.list_projects,
             "smartdev_list_tasks": reads.list_tasks,
             "smartdev_get_task": reads.get_task,
+            "smartdev_get_receipt": lambda **args: reads.get_receipt(**args),
             "smartdev_get_latest_response": reads.get_latest_response,
             "smartdev_create_task": reads.create_task,
             "smartdev_send_message": reads.send_message,
             "smartdev_reply_to_waiting_task": reads.reply_to_waiting_task,
+            RELEASE_TOOL: reads.release_dev,
         }
         name = params.get("name")
         arguments = params.get("arguments", {})

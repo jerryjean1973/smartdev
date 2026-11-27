@@ -5,6 +5,7 @@ import os
 import secrets
 import time
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlsplit
 
 import httpx
@@ -34,18 +35,22 @@ def upstream():
 
 
 @router.post("/coder-session")
-def issue(request: Request):
-    _, coder = configuration()
-    if urlsplit(coder).scheme != "https" or not Path("/run/command-coder/owner.json").is_file():
+def issue(request: Request, target: Literal["coding", "management"] = "coding"):
+    portal, coder = configuration()
+    if target == "management" and (request.headers.get("origin") != portal
+                                    or request.headers.get("host") != urlsplit(portal).netloc):
+        raise HTTPException(403, "Invalid management session origin.")
+    destination = portal if target == "management" else coder
+    if urlsplit(destination).scheme != "https" or not Path("/run/command-coder/owner.json").is_file():
         raise HTTPException(503, "Coder session handoff is unavailable.")
     grant = secrets.token_urlsafe(32)
     try:
         cookie = request.cookies["__Host-command"]
         expiry = int(cookie.split(".", 1)[0])
-        queue().set("smartdev:coder-grant:" + grant, json.dumps([session_ref(cookie), expiry]), ex=30, nx=True)
+        queue().set("smartdev:coder-grant:" + grant, json.dumps([session_ref(cookie), expiry, urlsplit(destination).netloc]), ex=30, nx=True)
     except RedisError:
         raise HTTPException(503, "Coder session handoff is unavailable.") from None
-    return {"endpoint": coder + BRIDGE, "grant": grant}
+    return {"endpoint": destination + ("/api" if target == "management" else "") + BRIDGE, "grant": grant}
 
 
 class Redemption(BaseModel):
@@ -54,8 +59,15 @@ class Redemption(BaseModel):
 
 def allowed(request):
     portal, coder = configuration()
-    return bool(portal and coder and request.headers.get("origin") == portal
-                and request.headers.get("host") == urlsplit(coder).netloc)
+    trusted_origins = {portal}
+    if os.getenv("SMARTDEV_ENABLE_CODING_HOST") == "1":
+        trusted_origins.add(coder)
+    caller = request.headers.get("origin")
+    host = request.headers.get("host")
+    return bool(portal and coder and (
+        (caller == portal and host == urlsplit(portal).netloc)
+        or (caller in trusted_origins and host == urlsplit(coder).netloc)
+    ))
 
 
 def cors():
@@ -81,7 +93,11 @@ def redeem(request: Request, body: Redemption):
         payload = redis.getdel("smartdev:coder-grant:" + body.grant)
         if not payload:
             return JSONResponse({"detail": "Connection request expired. Reconnect to try again."}, 401, headers=cors())
-        key, expiry = json.loads(payload)
+        values = json.loads(payload)
+        key, expiry = values[:2]
+        destination_host = values[2] if len(values) == 3 else urlsplit(configuration()[1]).netloc
+        if request.headers.get("host") != destination_host:
+            return JSONResponse({"detail": "Connection request is for another host."}, 403, headers=cors())
         ttl = min(BROWSER_TTL, expiry - int(time.time()))
         if ttl <= 0:
             return JSONResponse({"detail": "The SmartDev session ended."}, 401, headers=cors())

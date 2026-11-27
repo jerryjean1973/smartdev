@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from development import workspace_request
+from operator_task import Dispatch, RELEASE_OPERATION, dispatch, release_project
 from store import database
 
 router = APIRouter()
@@ -81,3 +82,32 @@ def publication_control(project_id: UUID, body: ApplicationAction):
     if body.action!="stop" and workspace_request(project_id)["status"]=="stopped":
         workspace_request(project_id, "start")
     return {"ok":True}
+
+
+@router.get("/projects/{project_id}/dev-release")
+def dev_release_status(project_id: UUID):
+    with database() as db:
+        project(db, project_id)
+        if project_id != release_project():
+            return {"revision": None, "receipt": None}
+        revision = os.getenv("SMARTDEV_OPERATOR_RELEASE_REVISION", "")
+        if not re.fullmatch(r"[0-9a-f]{40}", revision):
+            return {"revision": None, "receipt": None}
+        receipt = db.execute("""
+            SELECT dispatch_id, host_receipt_id, outcome, deployed_revision
+            FROM operator_task WHERE project_id=%s AND operation=%s AND dispatch_id IS NOT NULL
+            ORDER BY updated_at DESC LIMIT 1
+        """, (project_id, RELEASE_OPERATION)).fetchone()
+    return {"revision": revision, "receipt": receipt}
+
+
+@router.post("/projects/{project_id}/dev-release", status_code=202)
+def submit_dev_release(project_id: UUID, body: Dispatch):
+    if project_id != release_project():
+        raise HTTPException(409, "This project has no release binding.")
+    if (body.operation != RELEASE_OPERATION or body.grant is None
+            or body.grant.project_id != project_id
+            or body.revision != os.getenv("SMARTDEV_OPERATOR_RELEASE_REVISION")
+            or body.workspace != os.getenv("SMARTDEV_OPERATOR_RELEASE_WORKSPACE")):
+        raise HTTPException(422, "The approval must cover this project and revision.")
+    return dispatch(project_id, body)

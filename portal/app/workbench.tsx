@@ -1,12 +1,15 @@
 'use client';
 
-import { useEffect, useRef, useState, type ReactNode, type PointerEvent } from 'react';
-import { Ellipsis, ExternalLink, GitBranch, Globe, List, Columns3, RotateCw, Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus, Settings } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type ReactNode, type PointerEvent } from 'react';
+import { Ellipsis, ExternalLink, GitBranch, Globe, List, RotateCw, Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus, Settings } from 'lucide-react';
 import Memory from './memory';
 import Objectives from './objectives';
-import TaskBoard, { type BoardTask } from './task-board';
+import Taskboard from './taskboard';
+import CcConversation from './cc-conversation';
 import Runtime from './runtime';
 import DevPublishing from './dev-publishing';
+import SmdDeployment from './smd-deployment';
+import AdminProjects from './admin-projects';
 import ProjectDomains from './project-domains';
 import Integrations from './integrations';
 import ApplicationPreviewSettings, {defaultPreview,environments,type Environment,type PreviewSettings} from './preview-settings';
@@ -14,23 +17,23 @@ import Secrets from './secrets';
 
 type Project = { id: string; name: string; repository: string; status: string; workspace_url: string | null; error: string | null; archived: boolean };
 type Run = { agent: string; branch: string; worktree: string };
-type Objective = BoardTask & { progress: BoardTask['progress'] & {
-  active: Run[];
-  attempts: {branch: string; worktree: string; exit_code: number | null; started_at: string; finished_at: string | null}[];
+type Objective = { id: string; display_name?: string; expected_outcome: string; original_request: string; status: string; progress: {
+  executionSteps?: Array<Run & {id:string; criterion_id:string; started_at:string; finished_at:string|null; exit_code:number|null}>;
+  active: Run[]; completedCriteria: string[]; outstandingCriteria: string[]; nextAction: string | null;
+  blockedCriteria: string[]; attempts: {branch: string; worktree: string; exit_code: number | null; started_at: string; finished_at: string | null}[];
 } };
-const emptyObjectives: Objective[] = [];
-type Preferences = { left: number; command: number; right: number; showLeft: boolean; showCommand: boolean; showRight: boolean; collapsed?: string[]; expandedProjects?: string[]; hidePreview?: boolean; view: 'Preview' | 'Kanban' | 'Git' | 'Logs' | 'Project settings' | 'Project context' | 'Publishing' | 'Domains'; dark: boolean; project: string };
-const initial = {left: 188, command: 372, right: 420, showLeft: true, showCommand: true, showRight: false, view: (process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH ? 'Kanban' : 'Preview') as Preferences['view'], dark: true, project: ''};
+type Preferences = { left: number; command: number; right: number; showLeft: boolean; showCommand: boolean; showRight: boolean; collapsed?: string[]; expandedProjects?: string[]; hidePreview?: boolean; view: 'Preview' | 'Git' | 'Logs' | 'Project settings' | 'Project context' | 'Publishing' | 'Domains'; dark: boolean; project: string };
+const initial = {left: 188, command: 372, right: 420, showLeft: true, showCommand: true, showRight: false, view: 'Preview' as const, dark: true, project: ''};
 const workspaceTabs = [
-  ['Preview', Globe], ['Git', GitBranch], ['Logs', List], ['Kanban', Columns3],
+  ['Preview', Globe], ['Git', GitBranch], ['Logs', List],
 ] as const;
 type SidebarTask = {id:string; project_id:string; title:string|null; status:string};
 type ChatNavigationCommand = {project:string;type:'focus-task'|'new-task';id?:string};
 type ResizablePanel = 'left' | 'command' | 'right';
 type GitReview = {objective: string; tree: string; branch: string; head: string; base: string; diff: string; truncated: boolean};
 
-export default function Workbench({projects, createForm, signOut, updateProject}: {
-  projects: Project[]; createForm: ReactNode; signOut: ReactNode;
+export default function Workbench({projects, createForm, signOut, updateProject, managementOnly = false, codingOnly = false}: {
+  managementOnly?: boolean; codingOnly?: boolean; projects: Project[]; createForm: ReactNode; signOut: ReactNode;
   updateProject: (project: Project, verb: 'retry' | 'archive') => void;
 }) {
   const [prefs, setPrefs] = useState<Preferences>(initial);
@@ -58,14 +61,53 @@ export default function Workbench({projects, createForm, signOut, updateProject}
     return () => query.removeEventListener('change', update);
   }, []);
   const pendingNavigation = useRef<ChatNavigationCommand | undefined>(undefined);
-  const [taskFeed, setTaskFeed] = useState<{project: string; rows?: Objective[]; error?: string}>();
+  const [objectives, setObjectives] = useState<Objective[]>([]);
   const [fileView, setFileView] = useState<'files'|'history'>('files');
   const [parents, setParents] = useState<Record<string,string>>({});
   const [showIntegrations, setShowIntegrations] = useState(false);
+  const [showFleet, setShowFleet] = useState(managementOnly);
+  const fleetPages = {
+    workspaces: {label: 'Workspaces', path: '/workspaces'},
+    templates: {label: 'Templates', path: '/templates'},
+    agents: {label: 'Agents', path: '/agents'},
+    settings: {label: 'Settings', path: '/settings'},
+    deployment: {label: 'Stats', path: '/deployment'},
+    ai: {label: 'AI', path: '/ai/settings'},
+    health: {label: 'Healthcheck', path: '/health'},
+  } as const;
+  const [fleetView, setFleetView] = useState<keyof typeof fleetPages>(() => {
+    const view = managementOnly && typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('view') : null;
+    return view && Object.hasOwn(fleetPages, view) ? view as keyof typeof fleetPages : 'workspaces';
+  });
+  const [fleetPathOverride, setFleetPathOverride] = useState(() => {
+    const path = managementOnly && typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('native') : null;
+    if (!path || !new RegExp('^/' + fleetView + '(?:/[A-Za-z0-9_~-][A-Za-z0-9._~-]*)*/?$').test(path)) return null;
+    return path;
+  });
+  const fleetObserver = useRef<MutationObserver | null>(null);
+  useEffect(() => () => fleetObserver.current?.disconnect(), []);
+  const [fleetReady, setFleetReady] = useState(false);
+  const [adminTab, setAdminTab] = useState<'deployments' | 'tenants'>('deployments');
+  const [fleetOpening, setFleetOpening] = useState(false);
+  const [fleetError, setFleetError] = useState('');
+  const [showAdmin, setShowAdmin] = useState(!codingOnly && !managementOnly);
+  const [showTaskboard, setShowTaskboard] = useState(false);
+  const [ccConversation, setCcConversation] = useState<{taskId?: string; title: string}>();
+  useEffect(() => {
+    const view = new URLSearchParams(window.location.search).get('view');
+    if (view === 'taskboard') {
+      setShowFleet(false);
+      setShowAdmin(false);
+      setShowTaskboard(true);
+    }
+    if (view === 'cc-chat') setCcConversation({title: 'Main'});
+  }, []);
   const [failure, setFailure] = useState('');
   const [development, setDevelopment] = useState<{status: string; editor_ready: boolean; preview_ready?: boolean; chat_ready?: boolean; dev_preview_url?:string}>({status: '', editor_ready: false});
   const [publication,setPublication] = useState<{project:string; url:string|null; ready:boolean; runtime:string}>();
   const [working, setWorking] = useState(false);
+
   const [runtimeError, setRuntimeError] = useState('');
   const selectionTouched = useRef(false);
   const [selectionResolved,setSelectionResolved] = useState(false);
@@ -83,7 +125,7 @@ export default function Workbench({projects, createForm, signOut, updateProject}
   const expandedProjects = prefs.expandedProjects ?? (selected && !prefs.collapsed?.includes(selected.id) ? [selected.id] : []);
   useEffect(()=>{
     let mounted=true;
-    const load=()=>void fetch((process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH || '') + '/api/task-navigation',{cache:'no-store'}).then(async response=>{
+    const load=()=>void fetch('/api/task-navigation',{cache:'no-store'}).then(async response=>{
       if (!response.ok) return;
       const rows:SidebarTask[]=await response.json();
       if (mounted) setSidebarTasks(rows);
@@ -92,8 +134,6 @@ export default function Workbench({projects, createForm, signOut, updateProject}
     const timer=setInterval(load,3000);
     return ()=>{mounted=false;clearInterval(timer);};
   },[]);
-  const selectedFeed = taskFeed?.project === selected?.id ? taskFeed : undefined;
-  const objectives = selectedFeed?.rows ?? emptyObjectives;
   const active = objectives.flatMap(objective => objective.progress.active);
   const workspace = selected?.workspace_url;
   const editor = workspace ? workspace.replace(/\/$/, '') + '/apps/editor/' : null;
@@ -129,7 +169,7 @@ export default function Workbench({projects, createForm, signOut, updateProject}
     if (!selected || restartingPreview) return;
     setRestartingPreview(true);
     try {
-      const response=await fetch((process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH || '') + '/api/projects/'+selected.id+'/dev-publishing',{
+      const response=await fetch('/api/projects/'+selected.id+'/dev-publishing',{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'restart'}),
       });
       if (!response.ok) throw Error((await response.json()).detail || 'Preview restart failed.');
@@ -142,7 +182,7 @@ export default function Workbench({projects, createForm, signOut, updateProject}
   useEffect(()=>{
     if (!selectedProjectId) return;
     const request=new AbortController();
-    void fetch((process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH || '') + '/api/projects/'+selectedProjectId+'/preview',{signal:request.signal,cache:'no-store'}).then(async response=>{
+    void fetch('/api/projects/'+selectedProjectId+'/preview',{signal:request.signal,cache:'no-store'}).then(async response=>{
       if (!response.ok) throw Error('Preview configuration could not be loaded.');
       const settings=await response.json() as PreviewSettings;
       if (!request.signal.aborted) setPreviewConfig({project:selectedProjectId,settings});
@@ -186,7 +226,7 @@ export default function Workbench({projects, createForm, signOut, updateProject}
         view: current && ['Preview','Git','Logs','Project settings','Project context','Publishing','Domains'].includes(saved.view) ? saved.view : 'Preview',
         dark: saved.dark ?? true});
     } catch {}
-    void fetch((process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH || '') + '/api/account/project-selection',{cache:'no-store',signal:AbortSignal.timeout(3500)}).then(async response=>{
+    void fetch('/api/account/project-selection',{cache:'no-store',signal:AbortSignal.timeout(3500)}).then(async response=>{
       if (!response.ok) return;
       const {id}=await response.json();
       if (typeof id==='string' && !selectionTouched.current) setPrefs(current=>({...current,project:id}));
@@ -196,10 +236,34 @@ export default function Workbench({projects, createForm, signOut, updateProject}
   useEffect(() => {
     if (restored) localStorage.setItem('smartdev.workspace.v3', JSON.stringify(prefs));
   }, [prefs, restored]);
+  const openWorkspaces = useCallback(async () => {
+    setFleetOpening(true);
+    setFleetError('');
+    try {
+      const current = await fetch('/api/v2/users/me', {cache: 'no-store'});
+      if (!current.ok) {
+        const response = await fetch('/api/coder-session?target=management', {method: 'POST'});
+        if (!response.ok) throw Error();
+        const {endpoint, grant} = await response.json();
+        const exchange = await fetch(endpoint, {method: 'POST',
+          headers: {'Content-Type': 'application/json'}, body: JSON.stringify({grant})});
+        if (!exchange.ok) throw Error();
+      }
+      setFleetReady(true);
+    } catch {
+      setFleetError('Could not open Workspaces. Try again.');
+    } finally {
+      setFleetOpening(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (managementOnly && new URLSearchParams(window.location.search).get('view') !== 'taskboard') void openWorkspaces();
+  }, [managementOnly, openWorkspaces]);
+
   async function connectCoder() {
     setCoderConnection('connecting');
     try {
-      const response = await fetch((process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH || '') + '/api/coder-session', {method: 'POST', cache: 'no-store'});
+      const response = await fetch('/api/coder-session', {method: 'POST', cache: 'no-store'});
       if (!response.ok) throw new Error('Coder handoff is unavailable.');
       const {endpoint, grant} = await response.json();
       const exchange = await fetch(endpoint, {
@@ -216,13 +280,13 @@ export default function Workbench({projects, createForm, signOut, updateProject}
   useEffect(() => {
     if (!selected?.id) return;
     let closed = false;
-    setTaskFeed(undefined);
+    setObjectives([]);
     setFailure('');
     setDevelopment({status: '', editor_ready: false});
     setRuntimeError('');
     async function runtime() {
       try {
-        const response = await fetch((process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH || '') + '/api/projects/' + selected.id + '/development');
+        const response = await fetch('/api/projects/' + selected.id + '/development');
         const result = await response.json();
         if (!response.ok) throw new Error(result.detail || 'Workspace status is unavailable.');
         if (!closed) setDevelopment(result);
@@ -235,7 +299,7 @@ export default function Workbench({projects, createForm, signOut, updateProject}
     const project=selected.id;
     async function publishing() {
       try {
-        const response=await fetch((process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH || '') + '/api/projects/'+project+'/dev-publishing',{cache:'no-store'});
+        const response=await fetch('/api/projects/'+project+'/dev-publishing',{cache:'no-store'});
         if (!response.ok) throw Error();
         if (!closed) setPublication({...(await response.json()),project});
       } catch { if (!closed) setPublication(undefined); }
@@ -243,19 +307,13 @@ export default function Workbench({projects, createForm, signOut, updateProject}
     void publishing();
     const publishingTimer=setInterval(publishing,5000);
     async function refresh() {
-      let accessLost = false;
       try {
-        const response = await fetch((process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH || '') + '/api/projects/' + project + '/objectives', {cache: 'no-store'});
-        accessLost = [401, 403, 404].includes(response.status);
+        const response = await fetch('/api/projects/' + selected.id + '/objectives');
         if (!response.ok) throw new Error('Task status is unavailable.');
         const rows: Objective[] = await response.json();
-        if (!closed) { setTaskFeed({project, rows}); setFailure(''); }
+        if (!closed) { setObjectives(rows); setFailure(''); }
       } catch {
-        if (!closed) {
-          const error = 'Task status is unavailable.';
-          setTaskFeed(current => ({project, rows: !accessLost && current?.project === project ? current.rows : undefined, error}));
-          setFailure(error);
-        }
+        if (!closed) setFailure('Task status is unavailable.');
       }
     }
     void refresh();
@@ -367,7 +425,7 @@ export default function Workbench({projects, createForm, signOut, updateProject}
       expandedProjects: current.expandedProjects ?? expandedProjects}));
     setShowTaskDetails(false);
     setMenu('');
-    void fetch((process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH || '') + '/api/account/project-selection/'+project.id,{method:'PUT'}).catch(()=>{});
+    void fetch('/api/account/project-selection/'+project.id,{method:'PUT'}).catch(()=>{});
     setCreating(false);
   }
   async function lifecycle(action: 'start' | 'stop') {
@@ -375,7 +433,7 @@ export default function Workbench({projects, createForm, signOut, updateProject}
     setWorking(true);
     setRuntimeError('');
     try {
-      const response = await fetch((process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH || '') + '/api/projects/' + selected.id + '/development', {
+      const response = await fetch('/api/projects/' + selected.id + '/development', {
         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action}),
       });
       const result = await response.json();
@@ -410,6 +468,7 @@ export default function Workbench({projects, createForm, signOut, updateProject}
   }
   function sendChatNavigation(project:Project, type:ChatNavigationCommand['type'], id?:string) {
     if (!project.workspace_url) return;
+    setShowTaskboard(false);
     const frame=document.querySelector<HTMLIFrameElement>('iframe[data-chat-project="'+project.id+'"]');
     if (project.id===selected?.id && navigation && frame && !frame.hidden) {
       frame.contentWindow?.postMessage({source:'smartdev-portal',type,id},new URL(project.workspace_url).origin);
@@ -422,7 +481,7 @@ export default function Workbench({projects, createForm, signOut, updateProject}
     setExpandedView(null);
     setPrefs(p=>({...p,showCommand:true}));
   }
-  const showProjects = (mobileLayout ? mobileProjects : prefs.showLeft) && !expandedView;
+  const showProjects = !managementOnly && (mobileLayout ? mobileProjects : prefs.showLeft) && (showTaskboard || !expandedView);
   const toggleProjects = () => mobileLayout ? setMobileProjects(open => !open)
     : setPrefs(previous => ({...previous, showLeft: !previous.showLeft}));
   const showCommand = prefs.showCommand && !expandedView;
@@ -435,10 +494,12 @@ export default function Workbench({projects, createForm, signOut, updateProject}
     }
   }, [showFiles, selected?.id, development.editor_ready, coderConnection]);
   function toggleView(view: Preferences['view']) {
+    setShowTaskboard(false);
     if (expandedView === 'files') setExpandedView(null);
     setPrefs(p => ({...p, view, hidePreview:false}));
   }
   function toggleFiles() {
+    setShowTaskboard(false);
     if (showFiles) {
       setExpandedView(null);
       setPrefs(p=>({...p,showRight:false}));
@@ -453,19 +514,18 @@ export default function Workbench({projects, createForm, signOut, updateProject}
     const name = window.prompt('Task name', task.title || 'Project development task')?.trim();
     if (!name) return;
     try {
-      const response = await fetch((process.env.NEXT_PUBLIC_SMARTDEV_PREVIEW_PATH || '') + '/api/projects/' + task.project_id + '/objectives/' + task.id + '/display-name', {
+      const response = await fetch('/api/projects/' + task.project_id + '/objectives/' + task.id + '/display-name', {
         method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name}),
       });
       const result=await response.json();
       if (!response.ok) throw Error(typeof result.detail==='string'?result.detail:'Could not rename task.');
       setSidebarTasks(rows => rows.map(row => row.id === task.id ? {...row, title:result.display_name} : row));
-      setTaskFeed(current => current?.project === task.project_id && current.rows
-        ? {...current, rows: current.rows.map(row => row.id === task.id ? {...row, display_name:result.display_name} : row)}
-        : current);
+      setObjectives(rows => rows.map(row => row.id === task.id ? {...row, display_name:result.display_name} : row));
     } catch (error) { setFailure(error instanceof Error ? error.message : 'Could not rename task.'); }
   }
 
   function inspectTask(id: string) {
+    setShowTaskboard(false);
     setHighlightedTask(id);
     setCreating(false);
     setShowTaskDetails(true);
@@ -477,22 +537,48 @@ export default function Workbench({projects, createForm, signOut, updateProject}
     <header className="wb-toolbar">
       <div className="wb-toolbar-group">
         <strong className="wb-brand"><span className="brand-mark" aria-hidden="true">S</span>SmartDev</strong>
-        <select className="wb-project-switch" aria-label="Select project" value={selected?.id || ''} onChange={event => {
+        {!managementOnly && <><select className="wb-project-switch" aria-label="Select project" value={selected?.id || ''} onChange={event => {
           const project = available.find(item => item.id === event.target.value);
           if (project) choose(project);
         }}>
           {!selected && <option value="">Select project</option>}
           {available.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
         </select>
-        <button aria-pressed={prefs.view !== 'Project settings'} onClick={() => {setShowTaskDetails(false);setCreating(false);if(prefs.view==='Project settings') toggleView('Preview');}}>Build</button>
+        <button aria-pressed={!showAdmin && !showTaskboard && prefs.view !== 'Project settings'} onClick={() => {setShowAdmin(false);setShowTaskboard(false);setShowTaskDetails(false);setCreating(false);if(prefs.view==='Project settings') toggleView('Preview');}}>Build</button></>}
       </div>
       <div className="wb-toolbar-group wb-actions">
-        <button onClick={toggleProjects} aria-controls="projects-panel" aria-expanded={showProjects}>{showProjects ? <PanelLeftClose aria-hidden /> : <PanelLeftOpen aria-hidden />}{showProjects ? 'Hide Projects' : 'Show Projects'}</button>
-        <button onClick={toggleFiles} aria-controls="editor-panel" aria-expanded={showFiles}>{showFiles ? <PanelRightClose aria-hidden /> : <PanelRightOpen aria-hidden />}{showFiles ? 'Hide Files' : 'Show Files'}</button>
-        {published?.ready && published.url
+        {!codingOnly && <button type="button" onClick={() => setCcConversation({title: 'Main'})}>Ask CC</button>}
+        <button type="button" aria-pressed={showTaskboard} onClick={() => {
+          setShowFleet(false);
+          setShowTaskboard(true);
+          setShowAdmin(false);
+        }}>Taskboard</button>
+        {managementOnly ? <>
+          <button type="button" aria-pressed={showFleet && fleetView === 'workspaces'} onClick={() => {
+            setShowAdmin(false); setShowTaskboard(false); setShowFleet(true); setFleetPathOverride(null); setFleetView('workspaces');
+            if (!fleetReady && !fleetOpening) void openWorkspaces();
+          }}>Workspaces</button>
+          {(['deployments', 'tenants'] as const).map(tab =>
+            <button key={tab} type="button" aria-pressed={showAdmin && adminTab === tab} onClick={() => {
+              setShowFleet(false); setShowTaskboard(false); setAdminTab(tab); setShowAdmin(true);
+            }}>{tab === 'deployments' ? 'Deployments' : 'Tenants'}</button>)}
+          {(['ai', 'settings'] as const).map(view =>
+            <button key={view} type="button" aria-pressed={showFleet && fleetView === view} onClick={() => {
+              setShowAdmin(false); setShowTaskboard(false); setShowFleet(true); setFleetPathOverride(null); setFleetView(view);
+              if (!fleetReady && !fleetOpening) void openWorkspaces();
+            }}>{fleetPages[view].label}</button>)}
+        </> : !codingOnly && <button type="button" aria-pressed={showAdmin} onClick={() => {
+          setShowAdmin(open => !open);setShowTaskboard(false);
+        }}>Admin</button>}
+        {!managementOnly && !showAdmin && <button onClick={toggleProjects} aria-controls="projects-panel" aria-expanded={showProjects}>{showProjects ? <PanelLeftClose aria-hidden /> : <PanelLeftOpen aria-hidden />}{showProjects ? 'Hide Projects' : 'Show Projects'}</button>}
+        {!managementOnly && !showAdmin && <button onClick={toggleFiles} aria-controls="editor-panel" aria-expanded={showFiles}>{showFiles ? <PanelRightClose aria-hidden /> : <PanelRightOpen aria-hidden />}{showFiles ? 'Hide Files' : 'Show Files'}</button>}
+        {!managementOnly && published?.ready && published.url
           ? <a className="wb-open-app" href={published.url} target="_blank" rel="noopener noreferrer">Open application</a>
           : null}
-        <details className="wb-menu">
+        {managementOnly ? <>
+          <a className="wb-open-app" href="https://coder.smartdev.youkandoit.com/">Open Coder</a>
+          {signOut}
+        </> : <details className="wb-menu">
           <summary><Settings aria-hidden />Settings</summary>
           <div className="wb-menu-items">
             <button type="button" onClick={event => {
@@ -512,21 +598,61 @@ export default function Workbench({projects, createForm, signOut, updateProject}
             {editor && <a href={editor} target="_blank" rel="noreferrer">Full IDE</a>}
             {signOut}
           </div>
-        </details>
+        </details>}
       </div>
     </header>
+    {ccConversation && <CcConversation key={ccConversation.taskId || 'main'} {...ccConversation}
+      onClose={() => setCcConversation(undefined)} />}
+    {managementOnly && <section hidden={!showFleet} aria-label={fleetPages[fleetView].label}>
+      {fleetError && <p role="alert">{fleetError}</p>}
+      {fleetOpening && <p role="status">Opening Workspaces…</p>}
+      {fleetReady && <iframe title={fleetView === 'workspaces' ? 'Coder workspaces' : fleetPages[fleetView].label}
+        src={fleetPathOverride ?? fleetPages[fleetView].path} onLoad={event => {
+          fleetObserver.current?.disconnect();
+          const doc = event.currentTarget.contentDocument;
+          if (!doc?.body) return;
+          const updateNativeNavigation = () => {
+            for (const button of doc.querySelectorAll<HTMLButtonElement>('button[aria-haspopup="menu"]')) {
+              if (button.textContent?.trim() === 'Admin settings') button.hidden = true;
+            }
+            const agents = [...doc.querySelectorAll<HTMLAnchorElement>('a[href="/agents"]')]
+              .find(link => link.textContent?.trim() === 'Agents');
+            if (!agents?.parentElement || agents.parentElement.querySelector('[data-smartdev-fleet-link]')) return;
+            const links = (['deployment', 'health'] as const).map(view => {
+              const page = fleetPages[view];
+              const link = doc.createElement('a');
+              link.dataset.smartdevFleetLink = view;
+              link.className = agents.className;
+              link.href = page.path;
+              link.textContent = page.label;
+              return link;
+            });
+            agents.after(...links);
+          };
+          updateNativeNavigation();
+          const style = doc.createElement('style');
+          style.textContent = 'button[aria-haspopup="menu"][hidden] { display: none !important }';
+          doc.head.append(style);
+          fleetObserver.current = new MutationObserver(updateNativeNavigation);
+          fleetObserver.current.observe(doc.body, {subtree: true, childList: true});
+        }}
+        style={{display: 'block', width: '100%', height: 'calc(100dvh - 56px)', border: 0}} />}
+    </section>}
+    {showAdmin && <AdminProjects projects={projects} activeTab={managementOnly ? adminTab : undefined} />}
     {showIntegrations && <Integrations projectId={selected?.id} repository={selected?.repository} onClose={() => setShowIntegrations(false)} />}
-    <div className="wb-grid" style={{gridTemplateColumns: [
+    <div className="wb-grid" hidden={showAdmin || (managementOnly && !showTaskboard)} style={{display: showAdmin || (managementOnly && !showTaskboard) ? 'none' : undefined, gridTemplateColumns: [
       ...(showProjects ? ['minmax(150px, min(' + prefs.left + 'px, 19vw))', '5px'] : []),
-      ...(showCommand ? [showView ? 'minmax(270px, min(' + prefs.command + 'px, ' + (showFiles ? '31vw' : '42vw') + '))' : 'minmax(270px, 1fr)'] : []),
-      ...(showCommand && showView ? ['5px'] : []),
-      ...(showView ? ['minmax(220px, 1fr)'] : []),
-      ...(showFiles ? showView ? ['5px','minmax(0, min(' + prefs.right + 'px, 26vw))'] : ['minmax(0, 1fr)'] : []),
+      ...(showTaskboard ? ['minmax(0, 1fr)'] : [
+        ...(showCommand ? [showView ? 'minmax(270px, min(' + prefs.command + 'px, ' + (showFiles ? '31vw' : '42vw') + '))' : 'minmax(270px, 1fr)'] : []),
+        ...(showCommand && showView ? ['5px'] : []),
+        ...(showView ? ['minmax(220px, 1fr)'] : []),
+        ...(showFiles ? showView ? ['5px','minmax(0, min(' + prefs.right + 'px, 26vw))'] : ['minmax(0, 1fr)'] : []),
+      ]),
     ].join(' ')}}>
       <aside className="wb-side" id="projects-panel" hidden={!showProjects}>
         <div className="wb-panel-header">
           <h2>Projects</h2>
-          <button className="wb-add" aria-label="New or import project" title="New or import project" onClick={() => {setCreating(true); setShowTaskDetails(false);setPrefs(p=>({...p,showCommand:true}));}}><Plus aria-hidden /></button>
+          <button className="wb-add" aria-label="New or import project" title="New or import project" onClick={() => {setShowTaskboard(false);setCreating(true); setShowTaskDetails(false);setPrefs(p=>({...p,showCommand:true}));}}><Plus aria-hidden /></button>
           <button aria-label="Collapse projects panel" title="Collapse projects panel" onClick={toggleProjects}><PanelLeftClose aria-hidden /></button>
         </div>
         <nav className="wb-project-tree" aria-label="Projects and tasks" onKeyDown={event=>{if (event.key==='Escape') setMenu('');}}>
@@ -583,8 +709,18 @@ export default function Workbench({projects, createForm, signOut, updateProject}
             </div>;
           })}
         </nav>
-      </aside>{showProjects && (showCommand || showView) && divider('left')}
-      <aside className="wb-command" id="command-panel" aria-label="AI conversation" hidden={!showCommand}>
+      </aside>{showProjects && (showTaskboard || showCommand || showView) && divider('left')}
+      {showTaskboard && <div className="wb-taskboard-panel">
+        <Taskboard projects={available} navigation={navigation} sidebarTasks={sidebarTasks} parents={parents}
+          onAskCc={(taskId, title) => setCcConversation({taskId, title})}
+          onReply={(projectId, taskId) => {
+            const project = available.find(item => item.id === projectId);
+            if (managementOnly) {
+              setCcConversation({taskId, title: project?.name ?? 'Task'});
+            } else if (project) sendChatNavigation(project, 'focus-task', taskId);
+          }} />
+      </div>}
+      <aside className="wb-command" id="command-panel" aria-label="AI conversation" hidden={showTaskboard || !showCommand}>
         {!showTaskDetails && !creating && selected && coderConnection === 'connected' && !development.chat_ready &&
           <div className="wb-empty"><h3>{development.status === 'stopped' ? 'DEV is stopped' : 'Codex is waiting for DEV'}</h3>
             <p>{development.status === 'stopped' ? 'Start the workspace to open Codex.' : 'Chat opens when the workspace reports it ready.'}</p>
@@ -629,8 +765,8 @@ export default function Workbench({projects, createForm, signOut, updateProject}
           </div>}
         </>}
       </aside>
-      {showCommand && showView && divider('command')}
-      <section className="wb-editor wb-main-view" id="preview-panel" aria-label="Preview workspace" hidden={!showView}>
+      {!showTaskboard && showCommand && showView && divider('command')}
+      <section className="wb-editor wb-main-view" id="preview-panel" aria-label="Preview workspace" hidden={showTaskboard || !showView}>
         <div className="wb-view-header">
           <nav className="wb-workspace-tabs" aria-label="Application workspace views">
             {workspaceTabs.map(([view,Icon]) => <button key={view} aria-pressed={prefs.view === view} onClick={()=>toggleView(view)}>
@@ -643,9 +779,6 @@ export default function Workbench({projects, createForm, signOut, updateProject}
             <span>{expandedView === 'preview' ? 'Restore layout' : 'Expand'}</span>
           </button>
         </div>
-          {prefs.view === 'Kanban' && (selected
-            ? <TaskBoard key={selected.id} projectId={selected.id} tasks={selectedFeed?.rows} error={selectedFeed?.error} />
-            : <div className="wb-content"><p>Select a project to view tasks.</p></div>)}
           {prefs.view === 'Preview' && selected && <div className="wb-preview">
             <div className="wb-preview-toolbar" role="group" aria-label="Preview browser controls">
               <div className="wb-preview-environment">
@@ -708,6 +841,7 @@ export default function Workbench({projects, createForm, signOut, updateProject}
           </div>}
           {prefs.view === 'Publishing' && selected && <div className="wb-content">
             <h2>Publishing</h2>
+            {!codingOnly && <SmdDeployment key={'smd-'+selected.id} projectId={selected.id} projectName={selected.name} />}
             <DevPublishing key={'publishing-'+selected.id} projectId={selected.id} openPreview={()=>toggleView('Preview')} openLogs={()=>toggleView('Logs')} />
           </div>}
           {prefs.view === 'Domains' && selected && <ProjectDomains key={selected.id} projectId={selected.id} />}
@@ -746,8 +880,8 @@ export default function Workbench({projects, createForm, signOut, updateProject}
             </section>
           : <div className="wb-empty"><h3>Review task changes</h3><p>Select a conversation and click Review changes to load its worktree diff here.</p></div>)}
       </section>
-      {showFiles && showView && divider('right')}
-      <aside className="wb-editor wb-files" id="editor-panel" hidden={!showFiles}>
+      {!showTaskboard && showFiles && showView && divider('right')}
+      <aside className="wb-editor wb-files" id="editor-panel" hidden={showTaskboard || !showFiles}>
         <div className="wb-panel-header">
           <h2>Files &amp; folders</h2>
           <div className="wb-actions">

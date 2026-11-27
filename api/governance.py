@@ -1,7 +1,9 @@
 """Persist project objectives, coordinate assignments and gate completion on evidence."""
 import os
+import re
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException
@@ -15,6 +17,7 @@ Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max
 Fingerprint = Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
 RETRY_LIMIT = max(1, int(os.getenv("GOVERNANCE_RETRY_LIMIT", "3")))
 LEASE = "interval '90 seconds'"
+BOARD_DELETION = "Removed from Taskboard by the owner."
 
 
 class Criterion(BaseModel):
@@ -83,6 +86,7 @@ class Assignment(BaseModel):
     fingerprint: Fingerprint | None = None
     fingerprints: dict[str, Fingerprint] = Field(default_factory=dict, max_length=30)
     exit_code: int | None = Field(default=None, ge=0, le=255)
+    changed_files: int | None = Field(default=None, ge=0, le=1000000)
 
 
 def lock_project(db, project_id):
@@ -130,6 +134,21 @@ def save_definition(db, project_id, objective_id, definition, original_request=N
     db.execute("INSERT INTO objective_revision (objective_id,version,definition) VALUES (%s,%s,%s)",
                (objective_id, row["version"], Jsonb(definition.model_dump(mode="json"))))
     return row
+
+
+def verified_screenshot_urls(evidence):
+    urls = {}
+    for note in evidence:
+        for match in re.finditer(r"""https://[^\s<>"'()]+""", note, re.I):
+            url = match.group().rstrip(".,;")
+            try:
+                parts = urlsplit(url)
+                if (parts.hostname and not parts.username and not parts.password
+                        and re.search(r"\.(?:png|jpe?g|webp|gif)$", parts.path, re.I)):
+                    urls[url] = None
+            except ValueError:
+                continue
+    return list(urls)
 
 
 def progress(db, row, candidate=None):
@@ -181,6 +200,12 @@ def progress(db, row, candidate=None):
             ready.append(item)
     required = {item["id"] for item in row["criteria"] if item["mandatory"] and item["id"]!="implementation"}
     complete = bool(required) and required.issubset(completed) and not active
+    if not required and not active and row["status"] == "done" and recent:
+        latest = max(recent, key=lambda run: (run["started_at"], run["id"]))
+        complete = latest["exit_code"] == 0 and bool(db.execute("""
+            SELECT 1 FROM objective_owner_approval
+            WHERE objective_id=%s AND version=%s AND run_id=%s
+        """, (*key, latest["id"])).fetchone())
     status = ("done" if complete and row["status"]=="done" else "ready_for_review" if complete else
               "blocked" if required.intersection(blocked) or (blocked and not ready and not active) else "active")
     if status != row["status"] and candidate is None:
@@ -189,7 +214,7 @@ def progress(db, row, candidate=None):
         item["id"] for item in ready if attempts.get(item["id"], {}).get("exit_code") == 0
     ]
     next_action = "Review the verified task for integration." if complete and status=="ready_for_review" else None
-    if not required and not active:
+    if not complete and not required and not active:
         next_action = "Define acceptance criteria before requesting review."
     elif not complete and ready:
         next_criterion = ready[0]
@@ -197,12 +222,14 @@ def progress(db, row, candidate=None):
             next_action = f"Review evidence for {next_criterion['id']}: {next_criterion['description']}"
         else:
             next_action = next_criterion["description"]
+    evidence = [valid[name]["evidence"] for name in completed]
     return {
         "objectiveId": row["id"], "status": status, "completedCriteria": completed,
         "executionState": "running" if active else "idle",
         "awaitingReview": awaiting_review,
         "outstandingCriteria": [name for name in outstanding if name!="implementation"], "blockedCriteria": blocked,
-        "verifiedEvidence": [valid[name]["evidence"] for name in completed],
+        "verifiedEvidence": evidence,
+        "verifiedScreenshots": verified_screenshot_urls(evidence),
         "blockers": [valid[name]["evidence"] if name in valid else f"{name} reached the retry limit."
                      for name in blocked],
         "nextAction": next_action,
@@ -218,17 +245,100 @@ def list_objectives(project_id: UUID):
         rows = db.execute("""
             SELECT c.* FROM objective_contract c
             LEFT JOIN objective_presentation placement ON placement.objective_id=c.id AND placement.excluded_from_board
-            WHERE c.project_id=%s AND placement.objective_id IS NULL ORDER BY c.created_at DESC LIMIT 50
+            WHERE c.project_id=%s AND placement.objective_id IS NULL ORDER BY c.created_at DESC,c.id DESC
         """, (project_id,)).fetchall()
         results = []
         for row in rows:
             state = progress(db, row)
             state["executionSteps"] = db.execute("""
-                SELECT id,criterion_id,agent,branch,worktree,started_at,finished_at,exit_code
-                FROM objective_run WHERE project_id=%s AND objective_id=%s ORDER BY started_at DESC,id LIMIT 30
+                SELECT * FROM (
+                    SELECT id,criterion_id,agent,branch,worktree,started_at,finished_at,exit_code,changed_files,
+                           COALESCE(finished_at, GREATEST(started_at,lease_until - interval '90 seconds')) AS last_contact
+                    FROM objective_run WHERE project_id=%s AND objective_id=%s
+                    ORDER BY started_at DESC,id DESC LIMIT 30
+                ) recent ORDER BY started_at,id
             """,(project_id,row["id"])).fetchall()
+            state["milestones"] = db.execute("""
+                SELECT position,title,status,detail,updated_at,checks,
+                       CASE WHEN jsonb_array_length(checks)>0 THEN (
+                           SELECT count(*) FROM jsonb_array_elements(checks) check_item
+                           WHERE check_item->>'status'='done'
+                       ) ELSE progress_completed END AS progress_completed,
+                       COALESCE(NULLIF(jsonb_array_length(checks),0),progress_total) AS progress_total
+                FROM objective_milestone
+                WHERE objective_id=%s ORDER BY position
+            """, (row["id"],)).fetchall()
             results.append({**row, "criteria":[item for item in row["criteria"] if item["id"]!="implementation"], "status": state["status"], "progress": state})
         return results
+
+
+class BoardTask(BaseModel, extra="forbid"):
+    project_id: UUID
+    task_id: UUID
+    version: int = Field(ge=1)
+    run_id: UUID | None = None
+
+
+class BoardAction(BaseModel, extra="forbid"):
+    action: Literal["approve", "delete"]
+    tasks: list[BoardTask] = Field(min_length=1, max_length=1000)
+
+
+@router.get("/taskboard/business-objectives")
+def business_objectives():
+    with database() as db:
+        return db.execute("""
+            SELECT id,title,expected_outcome,priority,current_focus FROM business_objective
+            ORDER BY execution_order
+        """).fetchall()
+
+
+@router.post("/taskboard/actions")
+def taskboard_action(body: BoardAction):
+    ordered = sorted(body.tasks, key=lambda item: (item.project_id, item.task_id))
+    if len({item.task_id for item in ordered}) != len(ordered):
+        raise HTTPException(422, "List each task once.")
+    with database() as db:
+        for project_id in sorted({item.project_id for item in ordered}):
+            lock_project(db, project_id)
+        for item in ordered:
+            row = contract(db, item.project_id, item.task_id)
+            hidden = db.execute("""
+                SELECT reason FROM objective_presentation
+                WHERE objective_id=%s AND excluded_from_board
+            """, (item.task_id,)).fetchone()
+            if hidden:
+                if body.action == "delete" and hidden["reason"] == BOARD_DELETION:
+                    continue
+                raise HTTPException(409, "A selected task is no longer on Taskboard.")
+            if row["version"] != item.version:
+                raise HTTPException(409, "A selected task changed. Reload Taskboard and try again.")
+            state = progress(db, row)
+            latest = max(state["attempts"], key=lambda run: (run["started_at"], run["id"]), default=None)
+            if (latest and latest["id"] or None) != item.run_id or state["active"]:
+                raise HTTPException(409, "A selected task started or changed. Reload Taskboard and try again.")
+            if body.action == "approve":
+                if state["status"] == "done":
+                    continue
+                if state["status"] != "ready_for_review" or not state["verifiedScreenshots"]:
+                    raise HTTPException(409, "Verify the acceptance criteria and record verified screenshot evidence before approval.")
+                db.execute("""
+                    INSERT INTO objective_owner_approval (objective_id,version,run_id)
+                    VALUES (%s,%s,%s)
+                    ON CONFLICT (objective_id,version) DO UPDATE
+                    SET run_id=EXCLUDED.run_id,approved_at=now()
+                """, (item.task_id, item.version, item.run_id))
+                db.execute("UPDATE objective_contract SET status='done' WHERE id=%s", (item.task_id,))
+            else:
+                db.execute("""
+                    INSERT INTO objective_presentation (objective_id,placement,reason,excluded_from_board)
+                    VALUES (%s,'conversation',%s,true)
+                    ON CONFLICT (objective_id) DO UPDATE
+                    SET reason=EXCLUDED.reason,excluded_from_board=true,classified_at=now()
+                """, (item.task_id, BOARD_DELETION))
+            db.execute("INSERT INTO audit (project_id,action) VALUES (%s,%s)",
+                       (item.project_id, f"taskboard:{body.action}:{item.task_id}"))
+    return {"updated": [item.task_id for item in ordered]}
 
 
 @router.post("/projects/{project_id}/objectives", status_code=201)
@@ -300,7 +410,10 @@ def assignment(project_id: UUID, body: Assignment):
         if body.action == "heartbeat":
             if not existing or existing["finished_at"]:
                 raise HTTPException(409, "Assignment lease expired.")
-            db.execute(f"UPDATE objective_run SET lease_until=now()+{LEASE} WHERE id=%s", (body.execution_id,))
+            db.execute(f"""
+                UPDATE objective_run SET lease_until=now()+{LEASE},changed_files=COALESCE(%s,changed_files)
+                WHERE id=%s
+            """, (body.changed_files, body.execution_id))
             return {"ok": True}
         if body.action == "finish":
             if not existing or body.exit_code is None or not body.fingerprint:
@@ -350,6 +463,11 @@ def begin(db, project_id, body, existing):
         row = save_definition(db, project_id, body.objective_id,
                               Definition.model_construct(expected_outcome=expected, criteria=[], scope=[], constraints=[], dependencies=[]),
                               body.original_request)
+    if db.execute("""
+        SELECT 1 FROM objective_presentation
+        WHERE objective_id=%s AND excluded_from_board AND reason=%s
+    """, (row["id"], BOARD_DELETION)).fetchone():
+        raise HTTPException(409, "This task was deleted from Taskboard.")
     if body.version is not None and row["version"] != body.version:
         raise HTTPException(409, "Objective scope changed. Reload the approved version.")
     if existing and existing["finished_at"]:

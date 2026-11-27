@@ -315,12 +315,157 @@ body { margin: 0; }
 
 .wb-divider:not(:hover):not(:focus-visible) { background:linear-gradient(to right, transparent calc(50% - .5px), var(--line) calc(50% - .5px) calc(50% + .5px), transparent calc(50% + .5px)); }
 
-.wb-task-board { flex: 1; min-height: 0; overflow: auto; padding: 12px; overflow-wrap: anywhere; }
-.wb-task-lanes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 8px; }
-.wb-task-lanes ul { list-style: none; margin: 0; padding: 0; }
-.wb-task-lanes li + li { margin-top: 6px; }
-.wb-task-lanes button { width: 100%; text-align: left; overflow-wrap: anywhere; }
-.wb-task-board dd { margin: 0 0 8px; white-space: pre-wrap; }
+.wb-taskboard-panel { min-width: 0; min-height: 0; overflow: auto; }
+.wb-taskboard { max-width: 1120px; margin: 0 auto; padding: 24px 20px; }
+.wb-taskboard-header, .wb-taskboard-filters, .wb-taskboard-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wb-taskboard-header { justify-content: space-between; }
+.wb-taskboard-header h1 { margin: 0; font-size: 1.45rem; }
+.wb-taskboard-header label { display: flex; align-items: center; gap: 8px; }
+.wb-taskboard-filters { margin: 16px 0; }
+.wb-taskboard-filters span { margin-left: 4px; color: var(--muted); }
+.wb-taskboard-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.wb-taskboard-row { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow-wrap: anywhere; }
+.wb-taskboard-item { display: grid; grid-template-columns: minmax(0, 2fr) minmax(125px, 1fr) auto; gap: 16px; align-items: center; padding: 12px; }
+.wb-taskboard-item h2 { font-size: 0.94rem; margin: 0 0 4px; }
+.wb-taskboard-meta, .wb-taskboard-progress small { color: var(--muted); }
+.wb-taskboard-progress { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; align-items: center; }
+.wb-taskboard-progress progress { width: 100%; height: 10px; accent-color: var(--accent); }
+.wb-taskboard-progress small { grid-column: 1 / -1; }
+.wb-taskboard-actions button { display: inline-flex; align-items: center; gap: 5px; }
+.wb-taskboard-actions svg { color: #c07329; }
+.wb-taskboard-blocker { border-top: 1px solid var(--line); padding: 6px 12px; }
+.wb-taskboard-blocker li { white-space: pre-wrap; }
+@media (max-width: 760px) {
+  .wb-taskboard-item { grid-template-columns: 1fr; gap: 8px; }
+  .wb-taskboard { padding: 16px 12px; }
+}
+.wb-taskboard-options { display: flex; flex-wrap: wrap; gap: 8px 12px; }
+.wb-taskboard-section { margin-top: 22px; }
+.wb-taskboard-section > h2 { font-size: 1.13rem; margin: 0 0 8px; }
+.wb-taskboard-group { margin-bottom: 14px; }
+.wb-taskboard-group > h3 { font-size: 0.92rem; color: var(--muted); margin: 0 0 6px; }
+.wb-taskboard-actions button[aria-label^="Approve"] svg { color: #369769; }
+.wb-taskboard-actions button[aria-label^="Delete"] svg { color: #ce6064; }
+.wb-business-objectives { margin-top: 16px; padding: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+.wb-business-objectives > summary { cursor: pointer; font-weight: 650; }
+.wb-business-objectives > p { margin-bottom: 0; color: var(--muted); }
 
-.wb-kanban-preview { max-width: 1400px; margin: 0 auto; padding: 1rem; }
-.wb-kanban-preview > header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.workbench .wb-taskboard-title { padding: 0; border: 0; background: transparent; font: inherit; font-weight: 650; text-align: start; }
+.workbench .wb-taskboard-title:hover { background: transparent; color: var(--accent); text-decoration: underline; }
+.wb-taskboard-detail { border-top: 1px solid var(--line); padding: 12px; }
+.wb-taskboard-detail h3 { margin: 0 0 8px; }
+.wb-taskboard-detail h4 { margin: 10px 0 4px; }
+.wb-taskboard-detail p { margin: 4px 0; white-space: pre-wrap; }
+.wb-taskboard-detail li { white-space: pre-wrap; }
+
+.wb-cc-dialog { width: min(760px, calc(100% - 24px)); max-height: calc(100dvh - 24px); padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--background); color: var(--ink); }
+.wb-cc-dialog[open] { display: flex; flex-direction: column; }
+.wb-cc-dialog::backdrop { background: rgb(0 0 0 / 55%); }
+.wb-cc-header { display: flex; align-items: start; justify-content: space-between; gap: 8px; padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.wb-cc-header h2, .wb-cc-header p { margin: 0; }
+.wb-cc-header p { color: var(--muted); }
+.wb-cc-feed { min-height: min(200px, 26vh); flex: 1 1 auto; overflow: auto; padding: 12px 16px; }
+.wb-cc-turn { display: grid; gap: 8px; margin-bottom: 12px; }
+.wb-cc-message { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; max-width: 92%; min-width: 0; overflow-wrap: anywhere; }
+.wb-cc-message[data-speaker="owner"] { justify-self: end; background: var(--selected); }
+.wb-cc-message p { white-space: pre-wrap; margin: 4px 0; }
+.wb-cc-memory, .wb-cc-compose { border-top: 1px solid var(--line); padding: 10px 16px; }
+.wb-cc-memory { overflow: auto; max-height: 27vh; }
+.wb-cc-memory summary { cursor: pointer; }
+.wb-cc-memory form { display: flex; align-items: end; gap: 8px; }
+.wb-cc-memory form label { flex: 1; }
+.wb-cc-memory li { overflow-wrap: anywhere; }
+.wb-cc-compose { display: grid; gap: 6px; }
+.wb-cc-compose button { justify-self: end; }
+.wb-cc-error { color: #ef777b; padding-inline: 16px; }
+
+.wb-kanban { display: grid; grid-template-columns: repeat(7, minmax(236px, 1fr)); gap: 10px; overflow-x: auto; padding: 10px 0 14px; }
+.wb-kanban-lane { min-width: 0; padding: 9px; background: var(--raised); border: 1px solid var(--line); border-radius: 8px; }
+.wb-kanban-lane > h2 { display: flex; justify-content: space-between; margin: 0 0 10px; font-size: 0.95rem; }
+.wb-kanban-lane > p, .wb-kanban-lane > h2 small { color: var(--muted); }
+.wb-kanban .wb-taskboard-item { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 9px; }
+.wb-kanban .wb-taskboard-actions { gap: 5px; }
+
+.wb-business-objectives .wb-taskboard-filters button { display: inline-flex; align-items: center; gap: 6px; }
+.wb-business-status { flex: 0 0 auto; color: var(--muted); }
+.wb-business-status[data-tone="green"] { color: #409e72; }
+.wb-business-status[data-tone="yellow"] { color: #c79528; }
+.wb-business-status[data-tone="red"] { color: #d75b62; }
+
+.wb-taskboard-screenshots { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 8px; }
+.wb-taskboard-screenshots img { width: 100%; max-height: 320px; object-fit: contain; border: 1px solid var(--line); border-radius: 7px; }
+
+.wb-taskboard-milestones { margin: .6rem .75rem; padding: .7rem .85rem; border: 1px solid var(--line); border-radius: 8px; }
+.wb-taskboard-milestones summary { cursor: pointer; font-weight: 650; }
+.wb-taskboard-milestones ol { padding-inline-start: 1.35rem; margin-block: .65rem 0; }
+.wb-taskboard-milestones li { padding: 0; }
+.wb-taskboard-milestones .wb-milestone-status { font-size: .8rem; font-weight: 600; }
+.wb-taskboard-milestones :is([data-status="done"] > .wb-milestone-content, [data-status="done"] > .wb-milestone-row, [data-status="done"] > details > summary) > .wb-milestone-heading > .wb-milestone-status { color: #63c997; }
+.wb-taskboard-milestones :is([data-status="working"] > .wb-milestone-content, [data-status="working"] > .wb-milestone-row, [data-status="working"] > details > summary) > .wb-milestone-heading > .wb-milestone-status { color: #8ec5ff; }
+.wb-taskboard-milestones :is([data-status="blocked"] > .wb-milestone-content, [data-status="blocked"] > .wb-milestone-row, [data-status="blocked"] > details > summary) > .wb-milestone-heading > .wb-milestone-status { color: #ffb185; }
+.wb-taskboard-milestones p { margin: 0; }
+.wb-milestone-heading, .wb-milestone-progress { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem; }
+.wb-milestone-icon { color: #63c997; display: flex; align-items: center; min-height: 1.35rem; }
+.wb-milestone-progress { margin-block: .35rem; }
+.wb-milestone-progress progress { width: min(15rem, 60%); accent-color: #8ec5ff; }
+.wb-milestone-checks { list-style: none; padding-inline-start: 0; margin: 0; }
+.wb-milestone-detail > summary::-webkit-details-marker { display: none; }
+.wb-milestone-detail > summary .wb-milestone-heading::after { content: "▸"; color: var(--muted); }
+.wb-milestone-detail[open] > summary .wb-milestone-heading::after { content: "▾"; }
+.wb-taskboard-milestones .wb-milestone-description { margin-inline-start: 17px; }
+.wb-taskboard-milestones .wb-milestone-checks li p { font-size: .88rem; }
+.wb-taskboard-milestones > ol { list-style: none; padding-inline-start: 0; }
+.wb-task-activity { padding-inline-start: 1.2rem; }
+.wb-task-activity li { margin-block: .4rem; }
+
+.wb-taskboard-milestones .wb-milestone-row { display: grid; grid-template-columns: 17px minmax(0, 1fr); column-gap: 0; align-items: start; }
+.wb-milestone-number { font-variant-numeric: tabular-nums; font-weight: 650; }
+.wb-milestone-content { min-width: 0; overflow-wrap: anywhere; }
+
+.wb-taskboard-running { display: inline-flex; gap: 6px; align-items: center; color: var(--accent); }
+@media (prefers-reduced-motion: no-preference) {
+  .wb-taskboard-running svg { animation: wb-taskboard-spin 1s linear infinite; }
+}
+@keyframes wb-taskboard-spin { to { transform: rotate(360deg); } }
+
+.wb-cc-images { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 0; list-style: none; }
+.wb-cc-images li { display: grid; gap: 4px; }
+.wb-cc-images img { width: 72px; height: 56px; object-fit: contain; }
+
+.wb-taskboard-live { margin-block: 8px; font-size: .875rem; }
+.wb-taskboard-live ul { margin-block: 4px; padding-inline-start: 20px; }
+
+.wb-taskboard-timeline { border-top: 1px solid var(--line); padding-block: 8px; font-size: .875rem; }
+.wb-taskboard-timeline h4, .wb-taskboard-timeline p { margin: 0 0 6px; }
+.wb-taskboard-timeline ol { margin: 4px 0 8px; padding-inline-start: 20px; max-height: 12rem; overflow: auto; }
+.wb-taskboard-timeline li span, .wb-taskboard-timeline time { color: var(--muted); }
+
+.wb-work-history { padding: 0 12px 8px; font-size: .875rem; }
+.wb-work-history > summary { display: flex; align-items: center; gap: 4px; width: fit-content; cursor: pointer; color: var(--accent); font-weight: 600; list-style: none; }
+.wb-work-history > summary::-webkit-details-marker { display: none; }
+.wb-work-history[open] > summary .wb-work-chevron { transform: rotate(90deg); }
+.wb-work-history .wb-thinking, .wb-work-history .wb-thinking img { display: block; }
+.wb-work-caption, .wb-work-feed small, .wb-work-feed p { color: var(--muted); }
+.wb-work-caption { font-size: .8rem; font-weight: 400; }
+.wb-work-feed { padding: 6px 0 0; overflow-wrap: anywhere; }
+.wb-work-feed section + section { border-top: 1px solid var(--line); }
+.wb-work-feed h4, .wb-work-feed p { margin: 4px 0; }
+.wb-work-feed ol { list-style: none; margin: 0; padding: 0; }
+.wb-work-feed li { padding: 3px 0; white-space: pre-wrap; }
+.wb-work-feed time:not(:first-child) { margin-inline-start: .4rem; }
+.wb-work-feed li[data-kind="message"] { padding-block: 6px; }
+.wb-taskboard-milestones .wb-milestone-icon { min-height: 0; height: 1.35em; }
+.wb-taskboard-milestones .wb-milestone-row { min-height: 1.35em; }
+
+.workbench .wb-milestone-work { display: inline-flex; align-items: center; gap: 2px; padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-size: .8rem; }
+.wb-thinking img { display: block; }
+
+.wb-mcp-requests { list-style:none; padding:0; margin:4px 0 10px; }
+.wb-mcp-requests > li { border-bottom:1px solid var(--line); padding:4px 0; overflow-wrap:anywhere; }
+.wb-mcp-requests summary, .wb-task-mcp > summary { cursor:pointer; }
+.wb-mcp-requests summary small { color:var(--muted); white-space:normal; }
+.wb-mcp-message { margin:4px 0 8px; }
+.wb-mcp-message p { margin:3px 0; color:var(--muted); }
+.wb-mcp-message > div { white-space:pre-wrap; overflow-wrap:anywhere; max-height:26rem; overflow:auto; }
+.wb-task-mcp { margin:4px 0; }
+.wb-mcp-inbox { min-width:0; }
