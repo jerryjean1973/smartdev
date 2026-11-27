@@ -84,7 +84,7 @@ def add_model(archive, model_store):
 def add_workspace_tools(archive, runtime, staging):
     root = SOURCE.parents[1]
     clients = ("workspace-browser-start","workspace-screenshot","workspace-dev-login",
-               "command-dev-login.cjs","git-remote-smartdev","workspace-git-credential","codex-governance-hook","workspace-tools-check")
+               "command-dev-login.cjs","git-remote-smartdev","workspace-git-credential","codex-governance-hook","workspace-tools-check","workspace_git.py","git-mcp.toml")
     for client in clients:
         add_bytes(archive, "workspace-tools/clients/" + client, (root/"workspace"/client).read_bytes())
     for original, name in {

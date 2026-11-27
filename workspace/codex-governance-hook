@@ -53,7 +53,7 @@ def decision(event, context):
         guidance = ("Use screenshot URL --selector CSS --out /tmp/proof.png --publish for visual fixes. "
                     "Include its verified evidence link and the observed result. Use --login for a project's "
                     "enrolled application or Coder origin. workspace-dev-login verifies the default organization. "
-                    "Use git fetch or a fast-forward pull in the assigned checkout, preserving local changes.")
+                    "For Git updates use the workspace_git sync MCP tool with operation pull or fetch. It updates the assigned checkout and preserves local changes.")
         if event.get("source") == "compact":
             guidance = context["recovery"] + "\n" + guidance
         return {"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":guidance}}

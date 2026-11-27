@@ -11,6 +11,25 @@ ENTRY='cd "/projects/$PROJECT_NAME/repository" && exec codex sandbox -c sandbox_
 
 def verify(cid):
     try:
+        # The MCP server is a registered workspace process. Check its real Git directory,
+        # alongside the existing agent-shell transport and browser checks below.
+        tool = subprocess.run(
+            ["docker", "exec", "--user", "1000:1000", cid, "/usr/local/bin/workspace_git.py", "--health"],
+            capture_output=True, timeout=15,
+        )
+        registration = subprocess.run(
+            ["docker", "exec", "--user", "1000:1000", cid, "sh", "-c",
+             'cd "/projects/$PROJECT_NAME/repository" && exec codex mcp get workspace_git --json'],
+            capture_output=True, timeout=12,
+        )
+        if tool.returncode or registration.returncode:
+            return "git"
+        try:
+            registered = json.loads(registration.stdout)
+            if not registered["enabled"] or registered["transport"]["command"] != "/usr/local/bin/workspace_git.py":
+                return "git"
+        except (KeyError, TypeError, ValueError):
+            return "git"
         result=subprocess.run(["docker","exec","--user","1000:1000",cid,"sh","-c",ENTRY],
                               capture_output=True,text=True,timeout=145)
     except subprocess.TimeoutExpired:

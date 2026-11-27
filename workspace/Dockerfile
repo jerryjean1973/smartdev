@@ -12,6 +12,8 @@ COPY --chown=node:node chat /opt/command-chat
 COPY --chown=node:node preview /opt/command-preview
 COPY --chown=node:node codex-browser/chat.js /opt/command-chat/chat.js
 COPY requirements.toml /etc/codex/requirements.toml
+COPY git-mcp.toml /etc/codex/config.toml
+COPY workspace_git.py /usr/local/bin/workspace_git.py
 COPY command-dev-login.cjs /usr/local/lib/command-dev-login.cjs
 COPY workspace-screenshot workspace-browser-start workspace-dev-login git-remote-smartdev workspace-git-credential workspace-tools-check /usr/local/bin/
 RUN ln -s /usr/local/bin/workspace-screenshot /usr/local/bin/screenshot \

@@ -1,0 +1,4 @@
+[mcp_servers.workspace_git]
+command = "/usr/local/bin/workspace_git.py"
+env_vars = ["PROJECT_NAME", "PROJECT_REPOSITORY", "COMMAND_OBJECTIVE_CONTEXT"]
+tool_timeout_sec = 240

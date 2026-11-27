@@ -82,6 +82,14 @@ class Handler(socketserver.StreamRequestHandler):
             except OSError:pass
 class Server(socketserver.ThreadingMixIn,socketserver.UnixStreamServer):
     daemon_threads=True
+def register_git_mcp(cid, assets):
+    snippet = assets / "git-mcp.toml"
+    if not snippet.is_file():
+        return
+    subprocess.run(["docker", "exec", "-i", "-u", "0", cid, "/usr/local/bin/workspace_git.py", "--register"],
+                   input=snippet.read_bytes(), check=True, timeout=12)
+
+
 def provision(cid,settings):
     inspect=json.loads(docker("inspect",cid))[0]
     mount=next((Path(m["Source"]) for m in inspect["Mounts"] if m["Destination"]=="/run/command-memory" and not m["RW"]),None)
@@ -115,17 +123,18 @@ def provision(cid,settings):
     server.slots=threading.BoundedSemaphore(12)
     os.chown(endpoint,0,1000);endpoint.chmod(0o660)
     assets=INSTALL/"clients"
-    for name in ["workspace-browser-start","workspace-screenshot","git-remote-smartdev","workspace-dev-login","command-dev-login.cjs","codex-governance-hook","workspace-git-credential","workspace-tools-check"]:
+    for name in ["workspace-browser-start","workspace-screenshot","git-remote-smartdev","workspace-dev-login","command-dev-login.cjs","codex-governance-hook","workspace-git-credential","workspace-tools-check","workspace_git.py"]:
         source=assets/name
         if source.exists():
             if name=="codex-governance-hook":
                 # Preserve custom/newer assignment policies when backfilling an older workspace image.
                 original="c228793ad649b868cf17ef5b51d69a5d114ae70ca3dff42ae8ead04c4cfb77c2"
                 installed=subprocess.run(["docker","exec",cid,"sha256sum","/usr/local/bin/"+name],capture_output=True,text=True).stdout.split()
-                if installed and installed[0] not in {original,hashlib.sha256(source.read_bytes()).hexdigest()}:
+                if installed and installed[0] not in {original,"3660fb1d48e125ccd540bcf267238411ae3ba665c99a303aaf35c6a569878e6b",hashlib.sha256(source.read_bytes()).hexdigest()}:
                     continue
             dest="/usr/local/lib/" if name.endswith(".cjs") else "/usr/local/bin/"
             docker("cp",str(source),cid+":"+dest+name)
+    register_git_mcp(cid, assets)
     docker("cp",str(record["runtime"]/"bin/wget"),cid+":/usr/local/bin/wget")
     docker("exec","-u","0",cid,"ln","-sfn","/usr/local/bin/workspace-screenshot","/usr/local/bin/screenshot")
     docker("exec","-u","0",cid,"ln","-sfn","/usr/local/bin/workspace-screenshot","/usr/local/bin/chromium")
