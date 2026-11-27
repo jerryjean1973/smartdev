@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { ExternalLink } from 'lucide-react';
 
-export default function DeploymentLogin({ taskId, portal }: { taskId: string; portal: string }) {
+export default function DeploymentLogin({ taskId }: { taskId: string }) {
   const url = '/api/admin/compute/deployments/' + taskId + '/portal-login';
   const [result, setResult] = useState({ url: '', ready: false, label: '' });
   useEffect(() => {
@@ -34,12 +34,7 @@ export default function DeploymentLogin({ taskId, portal }: { taskId: string; po
     return () => { controller.abort(); clearTimeout(timer); };
   }, [url]);
   if (result.url !== url) return <small role="status">Checking portal sign-in…</small>;
-  if (!result.ready) return (
-    <div>
-      <small role="status">{result.label}</small>
-      <a href={portal} target="_blank" rel="noopener noreferrer">Open portal sign-in</a>
-    </div>
-  );
+  if (!result.ready) return <small role="status">{result.label}</small>;
   return (
     <form method="post" action={url} target="_blank" rel="noopener">
       <button type="submit">Open SmartDev Portal <ExternalLink size={13} aria-hidden="true" /></button>

@@ -53,7 +53,7 @@ export default function SmdConnections({taskId, projectNames = {}}: {
       <dt>VM hostname</dt><dd>{new URL(connections.portal_url).hostname}</dd>
       <dt>Public IP</dt><dd><code>{connections.ipv4}</code></dd>
       <dt>SSH</dt><dd><code>ssh {connections.ssh_user}@{connections.ipv4}</code></dd>
-      <dt>SmartDev</dt><dd>{active ? <DeploymentLogin taskId={taskId} portal={connections.portal_url} /> : 'No active portal'}</dd>
+      <dt>SmartDev</dt><dd>{active ? <DeploymentLogin taskId={taskId} /> : 'No active portal'}</dd>
       <dt>Coder</dt><dd><a href={connections.coder_url}>Open Coder</a></dd>
     </dl>
     {connections.apps.length > 0 && <>

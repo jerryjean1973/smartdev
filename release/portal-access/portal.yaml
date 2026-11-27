@@ -1,3 +1,3 @@
 services:
   portal:
-    image: smartdev-portal:deployment-portal-access-20261127
+    image: smartdev-portal:deployment-portal-access-r2-20261127

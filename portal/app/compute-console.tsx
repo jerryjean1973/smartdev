@@ -450,7 +450,7 @@ function Details({
                 job.reconciled_at || job.status !== 'deployed' || !links ? 'No active portal' :
                 'Command Center sign-in'
               )}
-              action={links && !job.reconciled_at && job.status === 'deployed' ? <DeploymentLogin taskId={job.id} portal={links.portal_url} /> : null}
+              action={links && !job.reconciled_at && job.status === 'deployed' ? <DeploymentLogin taskId={job.id} /> : null}
             />
             <Connection
               title="Coder"
