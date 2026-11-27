@@ -185,6 +185,9 @@ async def tenant_api(scope,receive,send):
             return await native(scope,receive,send)
     scoped = re.fullmatch(r"/(workspace-memory|projects)/([a-f0-9-]{36})(?:/([^/]+)(?:/.*)?)?",path)
     if scoped and scoped[2] in projects:
+        if (scoped[1]=="projects" and method=="GET"
+                and re.fullmatch(r"/projects/[a-f0-9-]{36}/screenshots/[a-f0-9]{64}\.png",path)):
+            return await native(scope,receive,send)
         if scoped[1]=="workspace-memory" and path==f"/workspace-memory/{scoped[2]}/deployment-access" and method=="POST":
             from core import project_token
             from secrets import compare_digest
