@@ -127,11 +127,14 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
   const [businessObjectives, setBusinessObjectives] = useState<BusinessObjective[]>([]);
   const [businessFilter, setBusinessFilter] = useState('');
   const [view, setView] = useState<'list' | 'kanban' | 'mcp'>('list');
-  const mcp = useMcpRequests();
+  const [source,setSource] = useState<'all'|'mcp'>('all');
+  const mcp = useMcpRequests(projectFilter);
   const [receipt,setReceipt] = useState('');
   useEffect(()=>{
     const params=new URLSearchParams(window.location.search);
-    if(params.get('source')==='mcp' || params.has('receipt')) {
+    if(params.get('source')==='mcp') setSource('mcp');
+    if(params.get('project')) setProjectFilter(params.get('project')!);
+    if(params.has('receipt')) {
       setView('mcp');
       setReceipt(params.get('receipt') || '');
     }
@@ -152,7 +155,7 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
       if (refreshing || controller.signal.aborted) return;
       refreshing = true;
       clearTimeout(timer);
-      const ids = projectIds ? projectIds.split(',') : [];
+      const ids = projectIds.split(',').filter(id=>id && (!projectFilter || id===projectFilter));
       const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(4500)]);
       const askCc = fetch('/api/cc-codex/activity', {cache: 'no-store', signal})
         .then(async response => {
@@ -194,7 +197,7 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
       window.removeEventListener('focus', followVisibleTab);
       document.removeEventListener('visibilitychange', followVisibleTab);
     };
-  }, [projectIds, refreshKey]);
+  }, [projectIds, projectFilter, refreshKey]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -239,13 +242,19 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
   const objectiveMap=new Map(objectiveRows.map(row=>[row.task.id,row]));
   const replaced=new Set<string>();
   const requestRows:Row[]=[];
+  const covered=new Set<string>();
   for (const request of mcp.requests) {
+    if(request.admission==='duplicate') continue;
+    if(request.kind==='create' && request.task_id){
+      if(covered.has(request.task_id)) continue;
+      covered.add(request.task_id);
+    }
     const project=projectMap.get(request.project_id);
     if (!project) continue;
     const existing=request.kind==='create' && request.task_id ? objectiveMap.get(request.task_id) : undefined;
     if (existing) {
       replaced.add(existing.task.id);
-      requestRows.push({...existing,request});
+      requestRows.push({...existing,request, running:existing.running || request.work_status==='Processing'});
       continue;
     }
     const task:Objective={id:request.request_id,display_name:request.label,expected_outcome:request.label,
@@ -253,7 +262,9 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
       status:request.work_status,version:0,criteria:[],progress:{completedCriteria:[],blockedCriteria:[],blockers:[],nextAction:null,active:[],attempts:[]}};
     requestRows.push({project,task,request,title:request.label,status:request.work_status,running:request.work_status==='Processing'});
   }
-  const allRows=[...objectiveRows.filter(row=>!replaced.has(row.task.id)),...requestRows];
+  const projectRows=[...objectiveRows.filter(row=>!replaced.has(row.task.id)),...requestRows]
+    .filter(row=>!projectFilter || row.project.id===projectFilter);
+  const allRows=projectRows.filter(row=>source==='all' || row.request);
   function requestGroupLabel(r:McpRequest) {
     if(r.scope_kind==='global') return 'Global platform';
     const bo=businessObjectives.find(item=>item.id===r.business_objective);
@@ -379,7 +390,7 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
       if (!step.progress_total || step.progress_completed == null) return sum;
       return sum + Math.max(0, Math.min(1, step.progress_completed / step.progress_total));
     }, 0);
-    const percent = status === 'Completed' || awaitingApproval ? 100
+    const percent = status === 'Completed' || request?.work_status==='Done' || awaitingApproval ? 100
       : showMilestones ? Math.min(milestonesDone === milestones.length ? 100 : 99, Math.floor(100 * milestoneUnits / milestones.length))
       : total ? Math.floor(100 * verified / total) : null;
     const blocked = isBlocked(status);
@@ -408,7 +419,7 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
           </button></h2>
           <span className="wb-taskboard-meta">{project.name} · {status}</span>
           <div className="wb-taskboard-meta">Created <time dateTime={task.created_at}>
-            {new Date(task.created_at).toLocaleString(undefined, {year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',second:'2-digit',timeZoneName:'short'})}
+            {new Date(task.created_at).toLocaleString(undefined, {year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',second:'2-digit',timeZone:'America/Toronto',timeZoneName:'short'})}
           </time></div>
         </div>
         <div className="wb-taskboard-progress">
@@ -549,6 +560,9 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
         <option value="">All projects</option>
         {projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
       </select></label>
+      <label>Source <select value={source} onChange={event=>setSource(event.target.value as 'all'|'mcp')}>
+        <option value="all">All sources</option><option value="mcp">MCP only</option>
+      </select></label>
       <label>Group by <select value={grouping} onChange={event => setGrouping(event.target.value as Grouping)}>
         <option>Business objective</option><option>Story</option><option>None</option>
       </select></label>
@@ -560,15 +574,19 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
     <details className="wb-business-objectives" open>
       <summary>Business objectives</summary>
       <div className="wb-taskboard-filters">
-        <button type="button" aria-pressed={!selectedObjective} onClick={() => {setBusinessFilter('');setProjectFilter('');setFilter('All tasks');}}>
+        <button type="button" aria-pressed={!selectedObjective && source==='all'} onClick={() => {setSource('all');setBusinessFilter('');setFilter('All tasks');}}>
           All objectives
         </button>
+        <button type="button" aria-pressed={source==='mcp' && !selectedObjective}
+          onClick={()=>{setSource('mcp');setBusinessFilter('');setFilter('All tasks');if(view==='mcp')setView('list');}}>
+          MCP tasks <span>{projectRows.filter(row=>row.request).length}</span>
+        </button>
         <button type="button" aria-pressed={selectedObjective === 'global'}
-          onClick={() => {setBusinessFilter('global');setProjectFilter('');setFilter('All tasks');}}>
-          Global platform <span>{mcp.requests.filter(r=>r.scope_kind==='global').length}</span>
+          onClick={() => {setBusinessFilter('global');setFilter('All tasks');}}>
+          Global platform <span>{allRows.filter(row=>businessId(row)==='global').length}</span>
         </button>
         <button type="button" aria-pressed={selectedObjective === otherTasks}
-          onClick={() => {setBusinessFilter(otherTasks);setProjectFilter('');setFilter('All tasks');}}>
+          onClick={() => {setBusinessFilter(otherTasks);setFilter('All tasks');}}>
           Other tasks / bugs <span>{allRows.filter(isOtherTask).length}</span>
         </button>
         {businessObjectives.map(objective => {

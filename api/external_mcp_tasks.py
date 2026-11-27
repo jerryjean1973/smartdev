@@ -7,6 +7,7 @@ from uuid import UUID, uuid5
 import httpx
 
 import mcp_request_history as history
+import mcp_intake
 from core import workspace_name
 from external_mcp_read import ScopedTaskReads
 from store import database
@@ -44,6 +45,15 @@ def workspace_chat_request(project_id, workspace_url, method, endpoint, *, param
     except (httpx.HTTPError, ValueError, KeyError):
         raise WorkspaceUnavailable("The workspace could not confirm the request. Retry with the same request ID.") from None
 
+
+
+def record_delivery(project, request, result):
+    reply = {"task_id":result["objective"], "conversation_id":result["conversationId"], "message_id":result["messageId"],
+             "execution_id":result["executionId"], "status":result.get("status","running")}
+    if result.get("instructionDocumentId"):
+        reply["instruction_document_id"] = result["instructionDocumentId"]
+    history.delivered(project, request, reply)
+    return reply
 
 
 class ScopedTasks(ScopedTaskReads):
@@ -147,7 +157,11 @@ class ScopedTasks(ScopedTaskReads):
         return [task for task in tasks if status is None or task["status"] == status]
 
     def get_task(self, task_id):
-        return self._task_details(super().get_task(task_id))
+        try:
+            task = super().get_task(task_id)
+        except LookupError:
+            return history.pending_task(task_id, [p["project_id"] for p in self.list_projects()])
+        return {**self._task_details(task), "codex_task_id": str(task_id)}
 
     def get_receipt(self, receipt):
         from fastapi.encoders import jsonable_encoder
@@ -164,33 +178,42 @@ class ScopedTasks(ScopedTaskReads):
             raise ValueError("Invalid instruction")
         request_id = uuid5(self.owner_id, "smartdev-mcp:" + str(UUID(str(client_request_id))))
         kind = "create" if target.get("newTask") else "reply" if target.get("waitingReply") else "message"
-        history.received(project_id,request_id,kind,prompt,target.get("title"),target.get("objective"),scope)
+        row = mcp_intake.receive(project_id, request_id, kind, prompt, target.get("title"), target.get("objective"),
+                                 scope, work_key=target.pop("work_key", None), grant_id=self.grant_id)
+        answer = {"request_id":str(request_id), "codex_task_id":str(row["task_id"]), "task_id":str(row["task_id"]),
+                  "admission":row["admission"]}
+        if row["admission"] == "duplicate":
+            task = self.get_task(str(row["task_id"]))
+            return {**answer, "status":task["status"], "matched_request_id":str(row["matched_request"]) if row["matched_request"] else None}
+        if row["delivery"] == "accepted":
+            return {**answer,"conversation_id":str(row["task_id"]), "message_id":str(row["message_id"]),
+                    "execution_id":row["execution_ref"], "status":row["execution_phase"] or "Queued"}
+        if row["admission"] == "updated":
+            target = {"objective":str(row["task_id"]), "conversationId":str(row["task_id"]), "waitingReply":False}
         try:
             result = self._workspace(project_id, "POST", "run", payload={
-                "tree": "repository", "files": [], "requestId": str(request_id), "prompt": prompt, **target,
-            })
-            reply = {"task_id": result["objective"], "conversation_id": result["conversationId"],
-                    "message_id": result["messageId"], "execution_id": result["executionId"],
-                    "request_id": str(request_id),
-                    "status": result.get("status", "running"),
-                    **({"instruction_document_id": result["instructionDocumentId"]}
-                       if result.get("instructionDocumentId") else {})}
-        except (KeyError, WorkspaceUnavailable) as error:
+                "tree":"repository", "files":[], "requestId":str(request_id), "prompt":prompt, **target})
+            reply = record_delivery(project_id, request_id, result)
+        except (KeyError, WorkspaceUnavailable):
             history.delivered(project_id,request_id)
-            detail = str(error) if isinstance(error, WorkspaceUnavailable) else "Workspace confirmation unavailable."
-            raise WorkspaceUnavailable(f"{detail} Taskboard request {request_id}.") from None
-        history.delivered(project_id,request_id,reply)
-        return reply
+            return {**answer,"status":"Pending","delivery":"unconfirmed"}
+        return {**answer, **reply}
 
-    def create_task(self, project_id, instructions, client_request_id, title=None, scope=None):
+    def create_task(self, project_id, instructions, client_request_id, title=None, scope=None, work_key=None):
         project_id = self._require_project(project_id)
         if title is not None and (not isinstance(title, str) or len(title.strip()) > 100 or not valid_title(title.strip())):
             raise ValueError("Invalid title")
         return self._submit(project_id, client_request_id, instructions, scope=scope, newTask=True,
-                            title=title.strip() if title else None)
+                            title=title.strip() if title else None, work_key=work_key)
+
+    def _routing_task(self, task_id):
+        try:
+            return super().get_task(task_id)
+        except LookupError:
+            return history.pending_task(task_id, [p["project_id"] for p in self.list_projects()])
 
     def _send(self, task_id, message, client_request_id, waiting, scope):
-        task = super().get_task(task_id)
+        task = self._routing_task(task_id)
         return self._submit(UUID(task["project_id"]), client_request_id, message, scope=scope,
                             objective=task["task_id"], conversationId=task["task_id"], waitingReply=waiting)
 

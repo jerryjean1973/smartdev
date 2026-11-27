@@ -239,14 +239,17 @@ def conversation(project_id: UUID, body: Action, request: Request):
                         if prior_task["task_payload_sha256"] != body.task_payload_sha256:
                             raise HTTPException(409, "Task submission ID already belongs to different instructions.")
                         target = prior_task["conversation_id"]
-                claimed = db.execute("""INSERT INTO conversation_submission(conversation_id,request_id,environment,task_project_id,task_payload_sha256)
-                                        VALUES (%s,%s,%s,%s,%s) ON CONFLICT (conversation_id,request_id) DO UPDATE SET released=false
+                claimed = db.execute("""INSERT INTO conversation_submission(conversation_id,request_id,environment,task_project_id,task_payload_sha256,message_id)
+                                        VALUES (%s,%s,%s,%s,%s,COALESCE((SELECT task_id FROM mcp_task_request
+                                            WHERE project_id=%s AND request_id=%s AND admission='created'
+                                              AND payload_digest=%s AND %s='user'),gen_random_uuid())) ON CONFLICT (conversation_id,request_id) DO UPDATE SET released=false
                                         WHERE conversation_submission.released AND conversation_submission.result IS NULL
                                           AND conversation_submission.task_payload_sha256 IS NOT DISTINCT FROM EXCLUDED.task_payload_sha256
                                           AND (conversation_submission.environment=EXCLUDED.environment OR
                                             (conversation_submission.environment IS NULL AND EXCLUDED.environment='user'))
                                         RETURNING message_id""",
-                                     (target, body.request_id, environment, task_project, body.task_payload_sha256)).fetchone()
+                                     (target, body.request_id, environment, task_project, body.task_payload_sha256,
+                                      task_project,body.request_id,body.task_payload_sha256,environment)).fetchone()
                 if claimed:
                     return {**claimed, "claimed": True, "conversation_id": target}
                 prior = db.execute("""SELECT message_id,result,environment,task_payload_sha256 FROM conversation_submission

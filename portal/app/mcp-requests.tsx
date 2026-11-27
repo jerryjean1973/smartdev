@@ -3,7 +3,7 @@
 import {useEffect, useState} from 'react';
 
 export type McpRequest = {
-  request_id:string; project_id:string; project_name:string; task_id:string|null; task_title:string|null;
+  admission?:string|null; matched_request?:string|null; request_id:string; project_id:string; project_name:string; task_id:string|null; task_title:string|null;
   work_status:'Pending'|'Queued'|'Processing'|'Processed'|'Done'; execution_code:number|null; waiting_for_input:boolean; execution_updated_at:string|null; scope_kind:'objective'|'global'|'unassigned'; business_objective:string|null; receipt:string|null; kind:string; delivery:string; received_at:string|null; label:string;
 };
 const zone = 'America/Toronto';
@@ -12,7 +12,7 @@ const clock = new Intl.DateTimeFormat('en-CA',{timeZone:zone,month:'short',day:'
 const delivery:Record<string,string> = {accepted:'Accepted by workspace',received:'Received',unconfirmed:'Execution unconfirmed'};
 const kinds:Record<string,string> = {create:'New task',message:'Follow-up',reply:'Reply',submission:'Submission'};
 
-export function useMcpRequests() {
+export function useMcpRequests(projectId = '') {
   const [requests,setRequests] = useState<McpRequest[]>([]);
   const [error,setError] = useState(false);
   const [loaded,setLoaded] = useState(false);
@@ -21,7 +21,7 @@ export function useMcpRequests() {
     let timer:ReturnType<typeof setTimeout>;
     async function load(){
       try {
-        const r=await fetch('/api/taskboard/mcp-requests',{cache:'no-store',signal:AbortSignal.any([controller.signal,AbortSignal.timeout(9000)])});
+        const r=await fetch('/api/taskboard/mcp-requests'+(projectId?'?project_id='+encodeURIComponent(projectId):''),{cache:'no-store',signal:AbortSignal.any([controller.signal,AbortSignal.timeout(9000)])});
         if(!r.ok) throw Error();
         const data:McpRequest[]=await r.json();
         if(!controller.signal.aborted){setRequests(data);setError(false);setLoaded(true);}
@@ -30,8 +30,8 @@ export function useMcpRequests() {
     }
     void load();
     return ()=>{controller.abort();clearTimeout(timer);};
-  },[]);
-  return {requests,error,loaded};
+  },[projectId]);
+  return {requests:projectId?requests.filter(r=>r.project_id===projectId):requests,error,loaded};
 }
 
 export function RequestDetails({item,expanded=false,card=false}:{item:McpRequest;expanded?:boolean;card?:boolean}) {
@@ -51,7 +51,8 @@ export function RequestDetails({item,expanded=false,card=false}:{item:McpRequest
   return <details open={open} onToggle={e=>setOpen(e.currentTarget.open)}>
     <summary>{card ? 'Instruction and receipt' : <strong>{item.label} · {item.work_status}</strong>} <small>{item.received_at ? clock.format(new Date(item.received_at))+' Toronto' : 'Time unavailable'}</small></summary>
     {open && <div className="wb-mcp-message">
-      <p>{kinds[item.kind]} · {delivery[item.delivery]} · {item.project_name}</p>
+      <p>{item.admission==='duplicate'?'Already covered':item.admission==='updated'?'Updated existing task':kinds[item.kind]} · {item.project_name}</p>
+      {item.task_id && <p>Codex task ID <code>{item.task_id}</code></p>}
       {item.task_title && <p>Submitted through {item.task_title}</p>}
       <p>{item.receipt ? 'Execution receipt' : 'Request ID'} <code>{item.receipt || item.request_id}</code></p>
       {error ? <button type="button" onClick={()=>setRetry(r=>r+1)}>Retry loading instruction</button> : <div>{text ?? 'Loading instruction…'}</div>}
@@ -71,7 +72,7 @@ export function RequestInbox({items,reference,group,loaded,error}:{items:McpRequ
   const date=day.format(new Date());
   const todayItems=items.filter(r=>r.received_at && day.format(new Date(r.received_at))===date);
   const term=query.trim().toLowerCase();
-  const filtered=(today?todayItems:items).filter(r=>!term || [r.label,r.receipt,r.request_id,r.task_title,r.project_name,group(r)].some(v=>v?.toLowerCase().includes(term)));
+  const filtered=(today?todayItems:items).filter(r=>!term || [r.label,r.receipt,r.request_id,r.task_id,r.task_title,r.project_name,group(r)].some(v=>v?.toLowerCase().includes(term)));
   const groups=new Map<string,McpRequest[]>();
   for(const r of filtered){const key=group(r);const members=groups.get(key)??[];members.push(r);groups.set(key,members);}
   return <section aria-label="MCP requests" className="wb-mcp-inbox">

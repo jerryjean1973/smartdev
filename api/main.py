@@ -47,7 +47,14 @@ async def lifespan(app):
             db.execute(migration.read_text())
         from task_titles import backfill_titles
         backfill_titles(db)
-    yield
+    import asyncio
+    from mcp_intake import delivery_loop
+    worker = asyncio.create_task(delivery_loop())
+    try:
+        yield
+    finally:
+        worker.cancel()
+        await asyncio.gather(worker, return_exceptions=True)
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 origin = os.environ["PORTAL_ORIGIN"].rstrip("/")

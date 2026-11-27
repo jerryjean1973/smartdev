@@ -153,7 +153,10 @@ export default function Workbench({projects, createForm, signOut, updateProject,
   const configuredUrl=configured.url;
   // These deployed applications need their own origin for storage and API calls.
   // Other configured URLs retain an opaque sandboxed origin.
-  const registeredProductPreview = configuredUrl && /^https:\/\/(?:v2\.bcentrisk\.com|vendorgate\.ca)\//.test(configuredUrl);
+  const deploymentPreview = configuredUrl && selected && typeof window!=='undefined'
+    && /^smd-[a-f0-9]{32}\./.test(window.location.hostname)
+    && new URL(configuredUrl).origin==='https://app-'+selected.id.replaceAll('-','').slice(0,12)+'-'+window.location.hostname.slice(4,16)+window.location.hostname.slice(36);
+  const registeredProductPreview = deploymentPreview || configuredUrl && /^https:\/\/(?:v2\.bcentrisk\.com|vendorgate\.ca)\//.test(configuredUrl);
   const automatic=Boolean(previewSettings && !previewSettings.error && !configuredUrl &&
     configured.mode==='automatic' && previewEnvironment==='DEV' && workspace);
   const frameUrl=configuredUrl || (automatic && development.preview_ready && coderConnection==='connected' ? previewUrl : null);
@@ -555,6 +558,9 @@ export default function Workbench({projects, createForm, signOut, updateProject,
         <button aria-pressed={!showAdmin && !showTaskboard && prefs.view !== 'Project settings'} onClick={() => {setShowAdmin(false);setShowTaskboard(false);setShowTaskDetails(false);setCreating(false);if(prefs.view==='Project settings') toggleView('Preview');}}>Build</button></>}
       </div>
       <div className="wb-toolbar-group wb-actions">
+        {codingOnly && typeof window!=='undefined' && window.location.hostname==='coder.smartdev.youkandoit.com'
+          && selected?.id==='bca501cf-7f58-4cd6-b254-33bf4fe48c7c' &&
+          <a href="https://smartdev.youkandoit.com/" target="_blank" rel="noopener noreferrer">Open Command Center</a>}
         {!codingOnly && <button type="button" onClick={() => setCcConversation({title: 'Main'})}>Ask CC</button>}
         <button type="button" aria-pressed={showTaskboard} onClick={() => {
           setShowFleet(false);

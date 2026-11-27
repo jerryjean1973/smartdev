@@ -1,5 +1,5 @@
 {
   "directory": "portal",
-  "command": ["npm", "run", "start"],
+  "command": ["node", "preview-main.cjs"],
   "preserveBasePath": true
 }

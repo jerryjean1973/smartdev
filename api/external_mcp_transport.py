@@ -45,8 +45,8 @@ TOOLS = [
          {"task_id": {"type": "string", "format": "uuid"}}, ("task_id",)),
     tool("smartdev_get_latest_response", "Read the latest visible Codex response for a task",
          {"task_id": UUID_FIELD}, ("task_id",)),
-    tool("smartdev_create_task", "Create and start one SmartDev task. Reuse the same client request UUID on retry.",
-         {"project_id": UUID_FIELD, "title": {"type": "string"}, "instructions": TEXT_FIELD, "scope": SCOPE_FIELD,
+    tool("smartdev_create_task", "Submit work and receive its codex_task_id. Open matching work is reused or updated. Reuse the client request UUID on retry and a stable work_key for refinements.",
+         {"project_id": UUID_FIELD, "title": {"type": "string"}, "work_key": {"type":"string","description":"Stable issue or deliverable identifier within this project and scope."}, "instructions": TEXT_FIELD, "scope": SCOPE_FIELD,
           "client_request_id": UUID_FIELD}, ("project_id", "instructions", "client_request_id"), write=True),
     tool("smartdev_send_message", "Send a follow-up to an existing task. Reuse the same client request UUID on retry.",
          {**MESSAGE_FIELDS, "scope": SCOPE_FIELD}, tuple(MESSAGE_FIELDS), write=True),
@@ -109,6 +109,8 @@ def dispatch(message, reads):
         try:
             data = handlers[name](**arguments)
             result = {"content": [{"type": "text", "text": json.dumps(data)}]}
+            if isinstance(data, dict):
+                result["structuredContent"] = data
         except WorkspaceUnavailable as failure:
             result = {"content": [{"type": "text", "text": str(failure)}], "isError": True}
         except LookupError:

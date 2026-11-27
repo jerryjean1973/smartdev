@@ -62,6 +62,7 @@ def delivered(project, request, result=None):
             db.execute("""UPDATE mcp_task_request SET task_id=%s,message_id=%s,execution_ref=%s,delivery='accepted'
                 WHERE project_id=%s AND request_id=%s""", (UUID(result["task_id"]),UUID(result["message_id"]),
                 result["execution_id"],project,request))
+            db.execute("DELETE FROM mcp_task_outbox WHERE project_id=%s AND request_id=%s",(project,request))
 
 
 # Scope every relation to the original project and honor explicit task removal and fixture isolation.
@@ -74,7 +75,7 @@ SOURCE = """
  AND NOT EXISTS (SELECT 1 FROM objective_presentation hidden WHERE r.kind='create' AND hidden.objective_id=c.id
                  AND hidden.excluded_from_board AND hidden.reason='Removed from Taskboard by the owner.')
 """
-COLUMNS = """r.request_id,r.project_id,p.name AS project_name,r.task_id,r.message_id,
+COLUMNS = """r.request_id,r.project_id,p.name AS project_name,r.task_id,r.task_id AS codex_task_id,r.admission,r.matched_request,r.message_id,
  r.execution_ref AS receipt,r.kind,r.delivery,r.received_at,bo.id AS business_objective,
  CASE WHEN r.owner_done_at IS NOT NULL OR (r.kind='create' AND c.status='done') THEN 'Done'
       WHEN r.execution_phase IS NOT NULL THEN r.execution_phase
@@ -86,9 +87,10 @@ COLUMNS = """r.request_id,r.project_id,p.name AS project_name,r.task_id,r.messag
 
 
 @router.get("/taskboard/mcp-requests")
-def board_requests():
+def board_requests(project_id: UUID | None = None):
     with database() as db:
-        return db.execute("SELECT " + COLUMNS + SOURCE + " ORDER BY r.received_at DESC NULLS LAST,r.request_id").fetchall()
+        return db.execute("SELECT " + COLUMNS + SOURCE + (" AND r.project_id=%s" if project_id else "") +
+                          " ORDER BY r.received_at DESC NULLS LAST,r.request_id", (project_id,) if project_id else ()).fetchall()
 
 
 def lookup(reference, projects=None, *, include_instruction=False):
@@ -155,3 +157,12 @@ def request_activity(project_id: UUID, request_id: UUID, before: int | None = No
     actions = [entry for entry in workspace_actions(page.get("output") or "") if entry["id"].startswith(receipt + ":")]
     return {"workspace":{"actions":actions, "running":request["work_status"]=="Processing",
                          "start":page.get("start",0), "end":page.get("end",0)}}
+
+def pending_task(task, projects):
+    with database() as db:
+        row = db.execute("SELECT "+COLUMNS+SOURCE+" AND r.task_id=%s AND r.project_id=ANY(%s) AND r.admission IS DISTINCT FROM 'duplicate' ORDER BY r.received_at DESC LIMIT 1",
+                         (UUID(str(task)), [UUID(str(p)) for p in projects])).fetchone()
+    if not row:
+        raise LookupError("Task not available")
+    return {"task_id":str(row["task_id"]), "codex_task_id":str(row["task_id"]),
+            "title":row["task_title"] or row["label"], "project_id":str(row["project_id"]), "status":row["work_status"]}
