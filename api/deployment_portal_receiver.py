@@ -185,6 +185,27 @@ async def tenant_api(scope,receive,send):
             return await native(scope,receive,send)
     scoped = re.fullmatch(r"/(workspace-memory|projects)/([a-f0-9-]{36})(?:/([^/]+)(?:/.*)?)?",path)
     if scoped and scoped[2] in projects:
+        if scoped[1]=="workspace-memory" and path==f"/workspace-memory/{scoped[2]}/deployment-access" and method=="POST":
+            from core import project_token
+            from secrets import compare_digest
+            from smd_owner_client import owner_json
+            expected="Bearer "+project_token(bytes.fromhex(os.environ["MEMORY_ACCESS_KEY"]),UUID(scoped[2]))
+            if not compare_digest(request.headers.get("authorization","").encode(),expected.encode()):
+                return await JSONResponse({"detail":"Workspace authorization required."},401)(scope,receive,send)
+            try:
+                body=bytearray()
+                async for chunk in request.stream():
+                    if len(body)+len(chunk)>256:
+                        raise ValueError
+                    body.extend(chunk)
+                if json.loads(body)!={"deployment_id":task}:
+                    return await hidden(scope,receive,send)
+                data=await run_in_threadpool(owner_json,scoped[2],"deployment-access")
+            except ValueError:
+                return await JSONResponse({"detail":"Invalid deployment identifier."},422)(scope,receive,send)
+            except HTTPException as exc:
+                return await JSONResponse({"detail":exc.detail},exc.status_code)(scope,receive,send)
+            return await JSONResponse(data,headers={"Cache-Control":"no-store"})(scope,receive,send)
         verify=re.fullmatch(r"/projects/[a-f0-9-]{36}/integrations/inherited/([a-z][a-z0-9-]{0,32})/verify",path)
         if scoped[1]=="projects" and ((path.endswith("/integrations/inherited") and method=="GET") or (verify and method=="POST")):
             if not valid_session(request.cookies.get("__Host-command",""),bytes.fromhex(os.environ["SESSION_KEY"])):
@@ -198,7 +219,7 @@ async def tenant_api(scope,receive,send):
                 return await JSONResponse({"detail":exc.detail},exc.status_code)(scope,receive,send)
             return await JSONResponse(data,headers={"Cache-Control":"no-store"})(scope,receive,send)
         if scoped[1]=="workspace-memory" or scoped[3] in {
-            "preview","domains","secrets","development","objectives","tasks","mcp-tasks","conversations","runtime","integrations","memory","evidence","activity"}:
+            "preview","domains","secrets","development","objectives","tasks","mcp-tasks","mcp-requests","conversations","runtime","integrations","memory","evidence","activity"}:
             return await native(scope,receive,send)
     return await hidden(scope,receive,send)
 

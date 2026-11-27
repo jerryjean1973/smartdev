@@ -63,7 +63,7 @@ def run():
             db.execute("INSERT INTO projects(id) VALUES (%s)",(project,))
             db.execute("INSERT INTO smd_deploy_task VALUES (%s,%s,%s,'deployed',NULL,'qa.example.test',%s)",
                        (task,project,instance,Jsonb([{"id":str(project),"revision":"a"*40}])))
-            db.execute("INSERT INTO smd_deploy_receipt VALUES (%s,%s,now(),%s)",(task,instance,Jsonb({"portal_url":f"https://smd-{task.hex}.qa.example.test"})))
+            db.execute("INSERT INTO smd_deploy_receipt VALUES (%s,%s,now(),%s)",(task,instance,Jsonb({"portal_url":f"https://smd-{task.hex}.qa.example.test","coder_url":"https://coder.qa.example.test","apps":[{"project_id":str(project)},{"project_id":str(uuid4())}]})))
             db.execute("INSERT INTO smd_deployment_assignment VALUES (%s,%s,0)",(task,owner))
             bind(db,task,instance,raw(key))
         # The remote end produces an independent signing key only after confirming clean local secrets.
@@ -100,15 +100,28 @@ def run():
                     keys.append(load_pem_private_key((directory/(str(version)+".pem")).read_bytes(),None))
                     assert new==raw(keys[-1])
                     return new
-        with patch.object(tenant,"call",backend),patch.object(tenant,"stage_generation",staged):
+        with patch.object(tenant,"call",backend),patch("smd_owner_config.call",backend),patch.object(tenant,"stage_generation",staged):
             tenant.set_default(one,"DEV","CANARY",tenant.TenantSecret(value="fixture-red",version=0))
             tenant.set_default(two,"DEV","CANARY",tenant.TenantSecret(value="fixture-blue",version=0))
+            connections=api(client,key,"deployment-access").json()
+            assert connections["tenant"]=="Owner" and connections["apps"]==[{"project_id":str(project)}]
+            assert api(client,key,"deployment-access",target=uuid4()).status_code==403
             nonce=uuid4()
             assert api(client,key,"catalog",nonce=nonce).status_code==200
             assert api(client,key,"catalog",nonce=nonce).status_code==409
             assert api(client,key,"catalog",target=uuid4()).status_code==403
             spec=json.dumps({"name":"CANARY","environment":"DEV"}).encode()
             assert api(client,key,"tenant-secret",spec).json()=={"present":False}
+            tenant.set_default(owner,"DEV","CANARY",tenant.TenantSecret(value="fixture-owner",version=0))
+            with database() as db:
+                db.execute("INSERT INTO project_runtime VALUES (%s,'DEV',%s)",(project,Jsonb({"APP_KEY":"APP_SOURCE","CANARY":"APP_SOURCE"})))
+            vault["data/projects/"+str(project)+"/DEV/APP_SOURCE"]={"value":"fixture-project"}
+            names=api(client,key,"tenant-bindings").json()["names"]
+            assert sorted(item["name"] for item in names)==["APP_KEY","CANARY"]
+            assert api(client,key,"tenant-secret",spec).json()["value"]=="fixture-owner"
+            query=lambda name: json.dumps({"name":name,"environment":"DEV"}).encode()
+            assert api(client,key,"tenant-secret",query("APP_KEY")).json()["value"]=="fixture-project"
+            assert api(client,key,"tenant-secret",query("APP_SOURCE")).json()=={"present":False}
             domain="dev.customer.example"
             enroll=api(client,key,"domain-challenge",json.dumps({"hostname":domain}).encode())
             assert enroll.status_code==200
@@ -125,6 +138,7 @@ def run():
             first=keys[-1]
             assert api(client,first,"domains").json()["domains"]=={}
             assert api(client,first,"tenant-secret",spec).json()["value"]=="fixture-red"
+            assert api(client,first,"tenant-secret",query("APP_KEY")).json()=={"present":False}
             assert api(client,first,"portal-auth",json.dumps({"password":old}).encode()).status_code==401
             password=tenant.password(task,one,1)
             assert api(client,first,"portal-auth",json.dumps({"password":password}).encode()).status_code==200
@@ -151,7 +165,7 @@ def run():
             assert api(client,keys[-1],"catalog").status_code==200
         with database() as db:
             assert db.execute("SELECT count(*) AS n FROM projects") .fetchone()["n"]==1
-            assert db.execute("SELECT count(*) AS n FROM smd_tenant_default_secret").fetchone()["n"]==2
+            assert db.execute("SELECT count(*) AS n FROM smd_tenant_default_secret").fetchone()["n"]==3
             assert "fixture-" not in str(db.execute("SELECT * FROM audit").fetchall())
         print("PASS verified owner / tenant A / tenant B / owner, independent portal access, unchanged project, revoked sessions, replay rejection, failed-cleanup rollback and tenant-specific canaries")
     finally:

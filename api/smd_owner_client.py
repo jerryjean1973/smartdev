@@ -52,6 +52,13 @@ def owner_json(project, operation, value=None):
                     break
         if response.is_success:
             return response.json()
+        if response.status_code == 502:
+            try:
+                detail = response.json().get("detail")
+            except (ValueError, AttributeError):
+                detail = None
+            if detail == "OpenBao is unavailable or rejected vault access.":
+                raise HTTPException(503, "Command Center cannot read the assigned tenant credentials from OpenBao.")
         if response.status_code in (401, 403, 409, 422,429):
             raise HTTPException(response.status_code, "This operation is unavailable for the deployment assignment.")
     except (httpx.RequestError, ValueError):

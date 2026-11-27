@@ -112,15 +112,29 @@ def verify_provider_key(key):
         raise HTTPException(503, "Codex authentication check is temporarily unavailable.") from None
 
 
-@router.post("/workspace-memory/{project_id}/codex-access")
-def preflight(project_id: UUID, run: RunAccess):
-    active_run(project_id, run)
-    key=deployment_credential(project_id)
+def check_credentials(project_id):
+    key = deployment_credential(project_id)
     if key is None:
         from smd_owner_client import owner_json
         owner_json(project_id,"codex-models")
     else:
         verify_provider_key(key)
+
+
+@router.post("/workspace-memory/{project_id}/codex-access")
+def preflight(project_id: UUID, run: RunAccess):
+    for attempt in range(2):
+        active_run(project_id, run)
+        try:
+            check_credentials(project_id)
+            break
+        except HTTPException as exc:
+            if attempt or exc.detail not in {
+                "OpenBao is unavailable or rejected vault access.",
+                "Command Center cannot read the assigned tenant credentials from OpenBao.",
+            }:
+                raise
+            time.sleep(.5)
     try:
         bearer = secrets.token_urlsafe(32)
         queue().set("smartdev:codex-bearer:" + bearer,

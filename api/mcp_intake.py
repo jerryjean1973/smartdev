@@ -132,6 +132,11 @@ def receive(project, request, kind, prompt, title, task, scope=None, *, work_key
              title=COALESCE(NULLIF(mcp_task_request.title,''),EXCLUDED.title) RETURNING *""",
             (project, request, target, kind, visible_text(prompt), visible_text(title), payload_digest,
              "accepted" if action == "duplicate" else "received",scope,action,linked,work_key,fingerprint)).fetchone()
+        if grant_id:
+            db.execute("""UPDATE mcp_task_request r SET ingress_actor=g.owner_id,ingress_client=coalesce(nullif(g.refresh_client_id,''),'MCP'),
+                ingress_tenant=(SELECT tenant_name FROM command_center_project_tenant WHERE project_id=r.project_id)
+                FROM external_mcp_grant g WHERE g.id=%s AND r.project_id=%s AND r.request_id=%s AND r.ingress_actor IS NULL""",
+                (grant_id,project,request))
         if action != "duplicate" and row["delivery"] != "accepted":
             routing = {"newTask":True,"title":title} if action == "created" else {
                 "objective":str(target),"conversationId":str(target),"waitingReply":kind == "reply"}

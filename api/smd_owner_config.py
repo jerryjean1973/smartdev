@@ -59,7 +59,7 @@ def register_existing(task:UUID, body:Identity):
 
 
 def identity(db, task, project, instance, operation, timestamp, nonce, signature, body):
-    allowed={"portal-generation","portal-auth","domain-challenge","domains","domain-report","catalog","codex-models","codex-responses","model","tenant-bindings","tenant-secret"}
+    allowed={"portal-generation","portal-auth","domain-challenge","domains","domain-report","catalog","codex-models","codex-responses","model","tenant-bindings","tenant-secret","deployment-access"}
     allowed.update("verify-"+k for k,v in PROVIDERS.items() if v.endpoint)
     if operation not in allowed:
         raise HTTPException(422,"Unknown configuration operation.")
@@ -121,11 +121,48 @@ def project_openai(db,project,state):
     return validate_key(value) if value else None
 
 
+def runtime_defaults(db, project, state):
+    from smd_tenant_access import tenant_defaults
+    entries = tenant_defaults(db, state["tenant_id"])
+    if not state["owner"]:
+        return entries
+    names = {(entry["environment"], entry["name"]) for entry in entries}
+    for row in db.execute("SELECT environment,secret_bindings FROM project_runtime WHERE project_id=%s", (project,)):
+        for target in row["secret_bindings"]:
+            if (row["environment"], target) not in names:
+                entries.append({"environment": row["environment"], "name": target})
+    return entries
+
+
+def runtime_value(db, project, state, env, name):
+    from smd_tenant_access import tenant_value
+    value = tenant_value(db, state["tenant_id"], env, name)
+    if value is not None or not state["owner"]:
+        return value
+    row = db.execute("SELECT secret_bindings FROM project_runtime WHERE project_id=%s AND environment=%s",
+                     (project, env)).fetchone()
+    source = (row or {}).get("secret_bindings", {}).get(name)
+    if source:
+        stored = call("GET", f"data/projects/{project}/{env}/{source}", missing=True)
+        return ((stored or {}).get("data", {}).get("data") or {}).get("value")
+    return None
+
+
 def operation_result(db,task,project,operation,state,body):
     from smd_preview_domains import read_report, write_report
     from smd_tenant_access import login_check,tenant_defaults,tenant_value
     if operation=="portal-generation":
         return {"version":state["version"]}
+    if operation=="deployment-access":
+        row=db.execute("""SELECT c.name,r.connections FROM command_center_tenant c
+            JOIN smd_deploy_task t ON t.id=%s JOIN smd_deploy_receipt r
+              ON (r.task_id,r.instance_id)=(t.id,t.instance_id) AND r.verified_at IS NOT NULL
+            WHERE c.id=%s""",(task,state["tenant_id"])).fetchone()
+        links=(row or {}).get("connections") or {}
+        if not links.get("portal_url") or not links.get("coder_url"):
+            raise HTTPException(409,"Verified deployment connections are unavailable.")
+        return {"tenant":row["name"],"portal_url":links["portal_url"],"coder_url":links["coder_url"],
+                "apps":[item for item in links.get("apps",[]) if item.get("project_id")==str(project)]}
     if operation=="portal-auth":
         return login_check(task,state,body)
     if operation=="domain-challenge":
@@ -133,8 +170,6 @@ def operation_result(db,task,project,operation,state,body):
         return reserve_challenge(db,task,project,state["version"],body)
     if operation=="tenant-secret":
         from smd_tenant_access import default_path
-        if state["owner"]:
-            return {"present":False}
         try:
             spec=json.loads(body)
             name,env=spec["name"],spec["environment"]
@@ -143,12 +178,10 @@ def operation_result(db,task,project,operation,state,body):
                 raise HTTPException(409,"Tenant generation changed.")
         except (ValueError,TypeError,KeyError):
             raise HTTPException(422,"Invalid tenant binding.") from None
-        value=tenant_value(db,state["tenant_id"],env,name)
-        return {"present":value is not None,"value":value}
+        value=runtime_value(db,project,state,env,name)
+        return {"present":True,"value":value} if value is not None else {"present":False}
     if operation=="tenant-bindings":
-        if state["owner"]:
-            return {"names":[]}
-        return {"names":tenant_defaults(db,state["tenant_id"])}
+        return {"names":runtime_defaults(db,project,state)}
     if operation=="domains":
         return read_report(db,task,project,state["version"])
     if operation=="domain-report":
@@ -175,12 +208,12 @@ def operation_result(db,task,project,operation,state,body):
             raise HTTPException(409,"Configure the role provider for this deployment.")
         if provider=="openai":
             key=project_openai(db,project,state)
-        elif not state["owner"]:
-            key=tenant_value(db,state["tenant_id"],"DEV","ANTHROPIC_API_KEY")
         else:
-            secret=call("GET",f"data/projects/{project}/DEV/ANTHROPIC_API_KEY",missing=True)
-            key=((secret or {}).get("data",{}).get("data") or {}).get("value")
-            if not key:
+            key=runtime_value(db,project,state,"DEV","ANTHROPIC_API_KEY")
+            if not key and state["owner"]:
+                secret=call("GET",f"data/projects/{project}/DEV/ANTHROPIC_API_KEY",missing=True)
+                key=((secret or {}).get("data",{}).get("data") or {}).get("value")
+            if not key and state["owner"]:
                 secret=call("GET","data/integrations/anthropic",missing=True)
                 key=((secret or {}).get("data",{}).get("data") or {}).get("credential")
         if not key:
@@ -192,19 +225,15 @@ def operation_result(db,task,project,operation,state,body):
         return {"output":output,"usage":usage}
     if operation=="catalog":
         if state["owner"]:
-            return catalog(db,project)
+            return {**catalog(db,project),"defaults":runtime_defaults(db,project,state)}
         return {"roles":[],"providers":[],"defaults":tenant_defaults(db,state["tenant_id"])}
     if operation.startswith("verify-"):
         provider=operation.removeprefix("verify-")
         if provider in PROVIDERS and PROVIDERS[provider].endpoint:
-            if not state["owner"]:
-                value=tenant_value(db,state["tenant_id"],"DEV",provider.upper()+"_API_KEY")
-                if not value:
-                    raise HTTPException(409,"Tenant integration is unconfigured.")
-                result=probe(provider,value)
-                return {"status":result.status,"message":result.message}
-            secret=call("GET","data/integrations/"+provider,missing=True)
-            value=((secret or {}).get("data",{}).get("data") or {}).get("credential")
+            value=runtime_value(db,project,state,"DEV",provider.upper()+"_API_KEY")
+            if not value and state["owner"]:
+                secret=call("GET","data/integrations/"+provider,missing=True)
+                value=((secret or {}).get("data",{}).get("data") or {}).get("credential")
             if not value:
                 raise HTTPException(409,"Integration is unconfigured.")
             result=probe(provider,value)

@@ -163,7 +163,8 @@ class ScopedTasks(ScopedTaskReads):
             task = super().get_task(task_id)
         except LookupError:
             return history.pending_task(task_id, [p["project_id"] for p in self.list_projects()])
-        return {**self._task_details(task), "codex_task_id": str(task_id)}
+        return {**self._task_details(task), "codex_task_id": str(task_id),
+                "task_number":history.task_number(task["project_id"],task_id)}
 
     def get_receipt(self, receipt):
         from fastapi.encoders import jsonable_encoder
@@ -183,7 +184,7 @@ class ScopedTasks(ScopedTaskReads):
         row = mcp_intake.receive(project_id, request_id, kind, prompt, target.get("title"), target.get("objective"),
                                  scope, work_key=target.pop("work_key", None), grant_id=self.grant_id)
         answer = {"request_id":str(request_id), "codex_task_id":str(row["task_id"]), "task_id":str(row["task_id"]),
-                  "admission":row["admission"]}
+                  "admission":row["admission"], "task_number":history.task_number(project_id,row["board_item"])}
         if row["admission"] == "duplicate":
             task = self.get_task(str(row["task_id"]))
             return {**answer, "status":task["status"], "matched_request_id":str(row["matched_request"]) if row["matched_request"] else None}

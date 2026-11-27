@@ -474,3 +474,24 @@ body { margin: 0; }
 
 .compute-workbench{height:100dvh;display:flex;flex-direction:column;--line:#d4dfeb;--ink:#213950;--surface:white;--background:#f5f7fb;--muted:#55687b;--accent:#215fa9}
 .compute-workbench>section[hidden],.compute-workbench .wb-grid[hidden]{display:none!important}
+
+.wb-taskboard-panel, .wb-taskboard { min-inline-size: 0; max-inline-size: 100%; box-sizing: border-box; }
+.wb-taskboard { width: 100%; }
+.wb-kanban { display: grid; grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: clamp(236px, 22vw, 278px); align-items: start; max-width: 100%; overscroll-behavior-inline: contain; overflow-x: scroll; }
+.wb-kanban .wb-taskboard-title { font-weight: 450; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.wb-lane-controls { display:flex; flex-wrap:wrap; gap:6px; margin-block:8px; }
+.wb-task-table-wrap { max-width:100%; overflow:auto; border-block:1px solid var(--line); }
+.wb-task-table { border-collapse:collapse; width:100%; text-align:start; font-size:.85rem; }
+.wb-task-table th,.wb-task-table td { text-align:start; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+.wb-task-table th { white-space:nowrap; font-weight:550; }
+.workbench .wb-task-table th button,.workbench .wb-task-table .wb-table-title { border:0; background:transparent; font:inherit; padding:0; text-align:start; color:inherit; }
+.wb-task-table tr[data-work-id] > td:first-child { white-space:nowrap; font-variant-numeric:tabular-nums; }
+.wb-task-table tr[data-work-id] > td:nth-child(2) { min-width:15rem; max-width:26rem; }
+.wb-task-table time { display:inline-block; min-width:8em; }
+.wb-task-table td:last-child button { white-space:nowrap; margin:0 4px 3px 0; }
+.wb-task-table progress { max-width:7em; display:block; }
+.wb-sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+
+.wb-task-table tr[data-work-id] > td:last-child { white-space:nowrap; }
+.wb-outcome-filter { display:flex; align-items:center; gap:.6rem; margin-block:.5rem; }
+.wb-outcome-filter select {width:auto;}

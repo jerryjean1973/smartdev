@@ -13,7 +13,8 @@ with database() as db:
  FROM mcp_task_request r JOIN conversation_submission s
  ON (s.task_project_id,s.request_id)=(r.project_id,r.request_id)
  WHERE s.result->>'executionId' IS NOT NULL AND r.owner_done_at IS NULL
- AND (r.execution_phase IS DISTINCT FROM 'Processed' OR r.waiting_for_input)''').fetchall()
+ AND (r.execution_phase IS DISTINCT FROM 'Processed' OR r.waiting_for_input OR
+      (r.execution_code=78 AND r.failure_reason IS NULL))''').fetchall()
  print(json.dumps([{**r,'workspace':workspace_name(r['project_id'])} for r in rows],default=str))
 """
 SCAN="""import json,sys,re,pathlib
@@ -28,16 +29,18 @@ for f in root.glob('*.log'):
    key=e.get('execution');kind=e.get('type');at=e.get('at')
    if key not in wanted or not isinstance(at,str) or not re.fullmatch(r'\\d{4}-\\d\\d-\\d\\dT[0-9:.]+Z',at):continue
    if key in out and out[key][0]>at:continue
-   if kind=='smartdev.result' and type(e.get('code')) is int:out[key]=[at,'Processed',e['code'],bool(e.get('awaitingInput'))]
-   elif kind=='smartdev.run_status' and e.get('state')=='running':out[key]=[at,'Processing',None,False]
+   if kind=='smartdev.result' and type(e.get('code')) is int:out[key]=[at,'Processed',e['code'],bool(e.get('awaitingInput')),
+    ('Codex could not start because Command Center could not read the tenant credentials from OpenBao.' if 'OpenBao' in line
+     else 'Codex credential check failed before execution.' if e['code']==78 else None)]
+   elif kind=='smartdev.run_status' and e.get('state')=='running':out[key]=[at,'Processing',None,False,None]
 print(json.dumps(out))
 """
 SAVE="""import sys,json
 from store import database
 with database() as db:
  for row in json.load(sys.stdin):
-  db.execute('''UPDATE mcp_task_request SET execution_updated_at=%s,execution_phase=%s,execution_code=%s,waiting_for_input=%s
-    WHERE project_id=%s AND request_id=%s AND (execution_updated_at IS NULL OR execution_updated_at < %s)''',(*row,row[0]))
+  db.execute('''UPDATE mcp_task_request SET execution_updated_at=%s,execution_phase=%s,execution_code=%s,waiting_for_input=%s,failure_reason=%s
+    WHERE project_id=%s AND request_id=%s AND (execution_updated_at IS NULL OR execution_updated_at <= %s)''',(*row,row[0]))
 """
 def run(args,data=None):
  return subprocess.check_output(args,input=data,text=True,timeout=50)

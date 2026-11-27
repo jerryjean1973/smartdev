@@ -1,7 +1,8 @@
 'use client';
 
-import {useEffect, useState} from 'react';
-import {RequestInbox, RequestDetails, useMcpRequests, type McpRequest} from './mcp-requests';
+import {useEffect, useRef, useState} from 'react';
+import {RequestInbox, RequestDetails, receiptLine, useMcpRequests, type McpRequest} from './mcp-requests';
+import {TaskTable,shortTitle,type TaskLine} from './task-table';
 import TaskActivity, {ThinkingIcon} from './task-activity';
 import {CircleCheck, CircleDot, CircleHelp, CircleX, OctagonAlert, Trash2} from 'lucide-react';
 
@@ -10,6 +11,7 @@ type Navigation = {project: string; running: string[]; waiting: string[]; queued
 type SidebarTask = {id: string; status: string; title: string | null};
 type Objective = {
   id: string;
+  task_number?:string; tenant_name?:string; updated_at?:string;
   display_name: string | null;
   expected_outcome: string;
   original_request: string;
@@ -58,7 +60,7 @@ function statusOf(task: Objective, sidebar: SidebarTask | undefined, live?: Navi
   return sidebar?.status === 'Queued' || !latest ? 'Planned' : 'Active';
 }
 
-const filters = ['All tasks', 'Pending', 'Queued', 'Processing', 'Processed', 'Done', 'Running', 'Blocked', 'Awaiting approval', 'Completed'] as const;
+const filters = ['All tasks','Requested', 'Pending', 'Queued', 'Processing', 'Processed', 'Done', 'Running', 'Blocked', 'Awaiting approval', 'Completed'] as const;
 type Filter = typeof filters[number];
 const otherTasks = 'other-tasks';
 const approvalStatus = 'Complete · awaiting approval';
@@ -68,6 +70,22 @@ type Grouping = 'Business objective' | 'Story' | 'None';
 type BusinessObjective = {id: string; title: string; expected_outcome: string; priority: string; current_focus: boolean};
 type CcActivity = 'queued' | 'running';
 type Row = {project: Project; task: Objective; title: string; status: string; running: boolean; ccActivity?: CcActivity; request?:McpRequest};
+
+const outcomes=['All outcomes','Running','Succeeded','Failed','Cancelled','Unknown'] as const;
+type Outcome=typeof outcomes[number];
+function outcome(row:Pick<Row,'running'|'request'|'task'>):Outcome {
+  const code=row.request?row.request.execution_code:latestRun(row.task)?.exit_code;
+  if(row.running) return 'Running';
+  if(code===130) return 'Cancelled';
+  if(code===0) return 'Succeeded';
+  return code==null?'Unknown':'Failed';
+}
+function queryValue(key:string){
+  return typeof window==='undefined'?'':new URLSearchParams(window.location.search).get(key) || '';
+}
+function choice<T extends string>(key:string,options:readonly T[],fallback:T):T {
+  return options.find(value=>value===queryValue(key)) || fallback;
+}
 
 function objectiveStatus(tasks: Row[], unavailable: boolean) {
   if (unavailable) return {label: 'Status unavailable', tone: 'unknown', Icon: CircleHelp};
@@ -113,6 +131,7 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
   onAskCc?: (taskId: string, title: string) => void;
   onReply: (projectId: string, taskId: string) => void;
 }) {
+  const lanes=useRef<HTMLDivElement>(null);
   const projectIds = projects.map(project => project.id).sort().join(',');
   const [objectives, setObjectives] = useState<Record<string, Objective[]>>({});
   const [ccActivity, setCcActivity] = useState<Record<string, CcActivity>>({});
@@ -120,14 +139,23 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
   const [unavailable, setUnavailable] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [projectFilter, setProjectFilter] = useState(()=>typeof window==='undefined'?'':new URLSearchParams(window.location.search).get('project') || '');
-  const [filter, setFilter] = useState<Filter>('All tasks');
+  const [filter, setFilter] = useState<Filter>(()=>choice('lifecycle',filters,'All tasks'));
   const [open, setOpen] = useState<string | null>(null);
   const [workOpen, setWorkOpen] = useState<Record<string, boolean>>({});
   const [openTask, setOpenTask] = useState<string | null>(null);
   const [businessObjectives, setBusinessObjectives] = useState<BusinessObjective[]>([]);
-  const [businessFilter, setBusinessFilter] = useState('');
-  const [view, setView] = useState<'list' | 'kanban' | 'mcp'>('list');
-  const [source,setSource] = useState<'all'|'mcp'>(()=>typeof window!=='undefined' && new URLSearchParams(window.location.search).get('source')==='mcp'?'mcp':'all');
+  const [businessFilter, setBusinessFilter] = useState(()=>queryValue('bo'));
+  const [execution,setExecution]=useState<Outcome>(()=>choice('outcome',outcomes,'All outcomes'));
+  const [view, setView] = useState<'list' | 'kanban' | 'mcp'>(()=>choice('boardView',['list','kanban','mcp'] as const,'list'));
+  const [source,setSource] = useState<'all'|'mcp'|'ui'>(()=>choice('source',['all','mcp','ui'] as const,'all'));
+  useEffect(()=>{
+    const url=new URL(window.location.href);
+    for(const [key,value] of Object.entries({bo:businessFilter,source:source==='all'?'':source,lifecycle:filter==='All tasks'?'':filter,
+      outcome:execution==='All outcomes'?'':execution,boardView:view==='list'?'':view,project:projectFilter})){
+      if(value) url.searchParams.set(key,value);else url.searchParams.delete(key);
+    }
+    window.history.replaceState(window.history.state,'',url);
+  },[businessFilter,source,filter,execution,view,projectFilter]);
   const mcp = useMcpRequests(projectFilter);
   const [receipt,setReceipt] = useState('');
   useEffect(()=>{
@@ -161,7 +189,7 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
           return await response.json() as {tasks: {task_id: string; status: CcActivity}[]; host_tasks?: string[]};
         }).catch(() => null);
       const results = await Promise.allSettled(ids.map(async id => {
-        const response = await fetch('/api/projects/' + id + '/objectives'+(source==='mcp'?'?source=mcp':''), {
+        const response = await fetch('/api/projects/' + id + '/objectives?board=true'+(source==='mcp'?'&source=mcp':''), {
           cache: 'no-store', signal,
         });
         if (!response.ok) throw Error();
@@ -268,7 +296,7 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
   }
   const projectRows=[...objectiveRows.filter(row=>!replaced.has(row.task.id)),...requestRows]
     .filter(row=>!projectFilter || row.project.id===projectFilter);
-  const allRows=projectRows.filter(row=>source==='all' || row.request);
+  const allRows=projectRows.filter(row=>source==='all' || (source==='mcp'?Boolean(row.request):!row.request));
   function requestGroupLabel(r:McpRequest) {
     if(r.scope_kind==='global') return 'Global platform';
     const bo=businessObjectives.find(item=>item.id===r.business_objective);
@@ -289,14 +317,23 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
   const isBlocked = (status: string) => status === 'Blocked' || status === 'Awaiting input';
   function matches(filter: Filter, {status, running, request}: Row) {
     if (filter === 'All tasks') return true;
+    if (filter==='Requested') return status==='Planned' || status==='Requested';
     if (request && filter===request.work_status) return true;
     if (filter==='Completed' && request?.work_status==='Done') return true;
     if (filter === 'Running') return running;
-    if (filter === 'Blocked') return isBlocked(status);
+    if (filter === 'Blocked') return isBlocked(status) || Boolean(request?.execution_code);
     if (filter === 'Awaiting approval') return status === 'Complete · awaiting approval';
     return status === filter;
   }
-  const visible = rows.filter(row => matches(filter, row));
+  const inboxRows:Row[]=source==='ui'?[]:boardRequests.flatMap(request=>{
+    const project=projectMap.get(request.project_id);
+    if(!project) return [];
+    const task=objectiveMap.get(request.task_id || '')?.task || {id:request.request_id} as Objective;
+    return [{project,task,title:request.label,status:request.work_status,running:request.work_status==='Processing',request}];
+  });
+  const candidates=view==='mcp'?inboxRows:rows;
+  const outcomeRows=candidates.filter(row=>execution==='All outcomes'||outcome(row)===execution);
+  const visible=outcomeRows.filter(row=>matches(filter,row));
   const approvable = visible.filter(({status}) => status === approvalStatus);
   const canDelete = ({running, task, request}: Row) => (!request || (request.kind==='create' && request.task_id===task.id)) && !running && task.progress.active.length === 0;
   const deletable = visible.filter(canDelete);
@@ -363,7 +400,7 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
       const detail = request.waiting_for_input ? 'Awaiting input' : request.execution_code != null && request.execution_code!==0 ? 'Execution failed' : '';
       return <li className="wb-taskboard-row" key={project.id+':'+request.request_id} data-request-id={request.request_id}>
         <div className="wb-taskboard-item"><div><h2><button className="wb-taskboard-title" type="button"
-          aria-expanded={openTask===task.id} onClick={()=>setOpenTask(openTask===task.id?null:task.id)}>{title}</button></h2>
+          aria-expanded={openTask===task.id} onClick={()=>setOpenTask(openTask===task.id?null:task.id)}>{request?.task_number && <small>{request.task_number} </small>}{shortTitle(title)}</button></h2>
           <span className="wb-taskboard-meta">{project.name} · {request.work_status}{detail && ' · '+detail}</span>
           {request.received_at && <div className="wb-taskboard-meta">Created {new Date(request.received_at).toLocaleString('en-CA',{timeZone:'America/Toronto'})} Toronto</div>}
           {running && <ThinkingIcon/>}</div>
@@ -557,6 +594,21 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
     </li>;
   }
 
+  function tableLine(row:Row):TaskLine {
+    const {task,request,project}=row;
+    const run=latestRun(task);
+    const underlying=request?.task_id || task.id;
+    const evidence=task.progress.verifiedScreenshots?.length || 0;
+    const line:TaskLine=request?receiptLine(request):{
+      key:task.id,number:task.task_number,description:row.title,objective:businessId(row),project:project.name,tenant:task.tenant_name,
+      source:'Command Center',execution:row.status,verification:evidence?'Evidence recorded':'Unverified',created:task.created_at,
+      updated:task.updated_at || run?.finished_at || run?.started_at || task.created_at,evidence:evidence?evidence+' screenshots':'—',
+      active:row.running,details:()=>null};
+    return {...line, details:()=><div>{request && <RequestDetails item={request} expanded card/>}<ul className="wb-taskboard-list">{renderTask(row)}</ul></div>,
+      actions:<>{onAskCc && <button type="button" onClick={()=>onAskCc(underlying,row.title+(request?' · MCP request '+request.request_id:''))}>Ask CC</button>}
+        <button type="button" onClick={()=>onReply(project.id,underlying)}>Reply in Codex</button></>};
+  }
+
   return <section className="wb-taskboard" aria-labelledby="taskboard-heading">
     <div className="wb-taskboard-header">
       <h1 id="taskboard-heading">Taskboard</h1>
@@ -564,8 +616,8 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
         <option value="">All projects</option>
         {projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
       </select></label>
-      <label>Source <select value={source} onChange={event=>setSource(event.target.value as 'all'|'mcp')}>
-        <option value="all">All sources</option><option value="mcp">MCP only</option>
+      <label>Source <select value={source} onChange={event=>setSource(event.target.value as 'all'|'mcp'|'ui')}>
+        <option value="all">All sources</option><option value="mcp">MCP only</option><option value="ui">UI only</option>
       </select></label>
       <label>Group by <select value={grouping} onChange={event => setGrouping(event.target.value as Grouping)}>
         <option>Business objective</option><option>Story</option><option>None</option>
@@ -578,19 +630,19 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
     <details className="wb-business-objectives" open>
       <summary>Business objectives</summary>
       <div className="wb-taskboard-filters">
-        <button type="button" aria-pressed={!selectedObjective && source==='all'} onClick={() => {setSource('all');setBusinessFilter('');setFilter('All tasks');}}>
+        <button type="button" aria-pressed={!selectedObjective && source==='all'} onClick={() => {setBusinessFilter('');}}>
           All objectives
         </button>
         <button type="button" aria-pressed={source==='mcp' && !selectedObjective}
-          onClick={()=>{setSource('mcp');setBusinessFilter('');setFilter('All tasks');if(view==='mcp')setView('list');}}>
+          onClick={()=>{setSource('mcp');}}>
           MCP tasks <span>{projectRows.filter(row=>row.request).length}</span>
         </button>
         <button type="button" aria-pressed={selectedObjective === 'global'}
-          onClick={() => {setBusinessFilter('global');setFilter('All tasks');}}>
+          onClick={() => {setBusinessFilter('global');}}>
           Global platform <span>{allRows.filter(row=>businessId(row)==='global').length}</span>
         </button>
         <button type="button" aria-pressed={selectedObjective === otherTasks}
-          onClick={() => {setBusinessFilter(otherTasks);setFilter('All tasks');}}>
+          onClick={() => {setBusinessFilter(otherTasks);}}>
           Other tasks / bugs <span>{allRows.filter(isOtherTask).length}</span>
         </button>
         {businessObjectives.map(objective => {
@@ -600,7 +652,7 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
           const completed = linked.filter(row => ['Completed','Done'].includes(row.status)).length;
           return <button type="button" key={objective.id} aria-describedby={descriptionId}
             aria-pressed={selectedObjective === objective.id} title={label + ' · ' + completed + ' of ' + linked.length + ' tasks complete'}
-            onClick={() => {setBusinessFilter(objective.id);setGrouping('Business objective');setFilter('All tasks');}}>
+            onClick={() => {setBusinessFilter(objective.id);setGrouping('Business objective');}}>
             <Icon className="wb-business-status" data-tone={tone} size={15} aria-hidden="true" />
             {objective.priority} · {objective.id} — {objective.title}
             <span id={descriptionId} hidden>{label}. {completed} of {linked.length} tasks complete.</span>
@@ -618,13 +670,15 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
       <button type="button" aria-pressed={view === 'kanban'} onClick={() => setView('kanban')}>Kanban</button>
       <button type="button" aria-pressed={view==='mcp'} onClick={()=>setView('mcp')}>MCP requests</button>
     </div>
-    {view==='mcp' ? <RequestInbox items={boardRequests} reference={receipt} loaded={mcp.loaded} error={mcp.error}
-      group={requestGroupLabel}/> : <>
     <nav aria-label="Filter tasks" className="wb-taskboard-filters">
       {filters.map(item => <button key={item} type="button" aria-pressed={filter === item} onClick={() => setFilter(item)}>
-        {item} <span>{rows.filter(row => matches(item, row)).length}</span>
+        {item} <span>{outcomeRows.filter(row => matches(item, row)).length}</span>
       </button>)}
     </nav>
+    <label className="wb-outcome-filter">Execution outcome <select value={execution} onChange={e=>setExecution(e.target.value as Outcome)}>
+      {outcomes.map(item=><option value={item} key={item}>{item} ({candidates.filter(row=>matches(filter,row) && (item==='All outcomes'||outcome(row)===item)).length})</option>)}</select></label>
+    {view==='mcp' ? <RequestInbox items={visible.map(row=>row.request!)} reference={receipt} loaded={mcp.loaded} error={mcp.error}
+      group={requestGroupLabel}/> : <>
     <div className="wb-taskboard-actions" aria-label="Bulk task actions">
       <button type="button" disabled={changing || !approvable.length} onClick={() => void change('approve', approvable)}>
         <CircleCheck size={16} aria-hidden="true" /> Approve all ({approvable.length})
@@ -640,7 +694,14 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
     {!!unavailable.length && <p role="status">Could not refresh {projects.filter(project =>
       unavailable.includes(project.id)).map(project => project.name).join(', ')}.</p>}
     {!loading && !visible.length && <p>No tasks match this view.</p>}
-    {view === 'kanban' ? <div className="wb-kanban" role="region" aria-label="Business objective Kanban" tabIndex={0}>
+    {view === 'kanban' ? <><nav aria-label="Kanban navigation" className="wb-lane-controls">
+      <button type="button" onClick={()=>lanes.current?.scrollBy({left:-260})}>← Previous columns</button>
+      <select aria-label="Go to column" defaultValue="" onChange={event=>{const lane=lanes.current?.children[Number(event.target.value)] as HTMLElement|undefined;
+        if(lane && lanes.current) lanes.current.scrollLeft=lane===lanes.current.lastElementChild?lanes.current.scrollWidth:
+          lane.offsetLeft-(lanes.current.firstElementChild as HTMLElement).offsetLeft;}}>
+        <option value="" disabled>Go to column</option>{stages.map((stage,index)=><option value={index} key={stage}>{stage}</option>)}</select>
+      <button type="button" onClick={()=>lanes.current?.scrollBy({left:260})}>Next columns →</button></nav>
+      <div ref={lanes} className="wb-kanban"  role="region" aria-label="Business objective Kanban" tabIndex={0}>
       {stages.map(stage => {
         const cards = visible.filter(item => kanbanStage(item) === stage);
         return <section className="wb-kanban-lane" key={stage} aria-label={stage}>
@@ -648,16 +709,14 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
           {cards.length ? <ul className="wb-taskboard-list">{cards.map(renderTask)}</ul> : <p>No tasks</p>}
         </section>;
       })}
-    </div> : sections.map(section => {
+    </div></> : sections.map(section => {
       const items = visible.filter(({status}) => sectionOf(status) === section);
       if (!items.length) return null;
       return <section className="wb-taskboard-section" key={section}>
         <h2>{section}</h2>
         {groups(items).map(([group, members]) => <div className="wb-taskboard-group" key={group}>
           {group && <h3>{group}</h3>}
-          <ul className="wb-taskboard-list">
-          {members.map(renderTask)}
-    </ul></div>)}
+          <TaskTable rows={members.map(tableLine)} label={[section,group].filter(Boolean).join(' · ')}/></div>)}
     </section>;
     })}</>}
   </section>;

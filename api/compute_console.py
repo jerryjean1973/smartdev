@@ -181,11 +181,12 @@ def tenant_access(project_id: UUID, body: WorkspaceDeployment):
             """SELECT c.name AS tenant,r.connections FROM smd_deploy_task t
             JOIN smd_deployment_assignment a ON a.task_id=t.id
             JOIN command_center_tenant c ON c.id=a.tenant_id
-            JOIN command_center_project_tenant p ON p.project_id=%s AND p.tenant_name=c.name
-            JOIN projects live ON live.id=p.project_id AND NOT live.archived
+            JOIN projects live ON live.id=%s AND NOT live.archived
+            LEFT JOIN command_center_project_tenant p ON p.project_id=live.id
             JOIN smd_deploy_receipt r ON r.task_id=t.id AND r.instance_id=t.instance_id AND r.verified_at IS NOT NULL
-            WHERE t.id=%s AND t.status='deployed' AND t.reconciled_at IS NULL AND
-              (t.project_id=p.project_id OR EXISTS (SELECT 1 FROM jsonb_array_elements(t.project_manifest) m WHERE m->>'id'=p.project_id::text))""",
+            WHERE t.id=%s AND t.status='deployed' AND t.reconciled_at IS NULL
+              AND (p.tenant_name=c.name OR (p.project_id IS NULL AND c.id=smd_admin_tenant_id()))
+              AND (t.project_id=live.id OR EXISTS (SELECT 1 FROM jsonb_array_elements(t.project_manifest) m WHERE m->>'id'=live.id::text))""",
             (project_id, body.deployment_id),
         ).fetchone()
     if not record or not record["connections"]:

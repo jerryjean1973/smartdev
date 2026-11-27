@@ -1,4 +1,5 @@
 """Retain authorized MCP task writes independently of workspace availability."""
+import os
 import json
 import re
 from hashlib import sha256
@@ -72,29 +73,53 @@ SOURCE = """
  LEFT JOIN objective_contract c ON (c.project_id,c.id)=(r.project_id,r.task_id)
  CROSS JOIN LATERAL (SELECT COALESCE(r.request_scope,mcp_inferred_scope(COALESCE(NULLIF(r.title,''),r.instruction))) AS value) assignment
  LEFT JOIN business_objective bo ON bo.id=assignment.value
+ LEFT JOIN taskboard_item num ON (num.project_id,num.item_id)=(r.project_id,r.board_item)
+ LEFT JOIN LATERAL (SELECT revision,summary,evidence,verified_at FROM taskboard_repair proof
+   WHERE (proof.project_id,proof.request_id)=(r.project_id,r.request_id) ORDER BY verified_at DESC LIMIT 1) repair ON true
  WHERE NOT p.archived AND NOT EXISTS (SELECT 1 FROM acceptance_fixture f WHERE f.project_id=p.id)
  AND NOT EXISTS (SELECT 1 FROM objective_presentation hidden WHERE r.kind='create' AND hidden.objective_id=c.id
                  AND hidden.excluded_from_board AND hidden.reason='Removed from Taskboard by the owner.')
 """
 COLUMNS = """r.request_id,r.project_id,p.name AS project_name,r.task_id,r.task_id AS codex_task_id,r.admission,r.matched_request,r.message_id,
- r.execution_ref AS receipt,r.kind,r.delivery,r.received_at,bo.id AS business_objective,
+ taskboard_number(num.number) AS task_number,r.ingress_tenant AS tenant_name,r.ingress_actor::text AS actor,
+ COALESCE(NULLIF(r.ingress_client,''),CASE WHEN r.kind<>'submission' THEN 'MCP' END) AS connector,
+ CASE WHEN cc_board_destination(r.project_id,r.request_scope,c.business_objective) THEN 'Command Center' ELSE 'Workspace' END AS destination,
+ r.failure_reason,CASE WHEN repair.revision IS NOT NULL THEN to_jsonb(repair) END AS repair,r.execution_ref AS receipt,r.kind,r.delivery,r.received_at,bo.id AS business_objective,
  CASE WHEN COALESCE(covered.owner_done_at,r.owner_done_at) IS NOT NULL OR (r.kind='create' AND c.status='done') THEN 'Done'
       WHEN COALESCE(covered.execution_phase,r.execution_phase) IS NOT NULL THEN COALESCE(covered.execution_phase,r.execution_phase)
       WHEN COALESCE(covered.delivery,r.delivery)='accepted' THEN 'Queued' ELSE 'Pending' END AS work_status,
  r.execution_code,r.waiting_for_input,r.execution_updated_at,
  CASE WHEN bo.id IS NOT NULL THEN 'objective' WHEN assignment.value='global' THEN 'global' ELSE 'unassigned' END AS scope_kind,
  c.business_objective AS origin_business_objective,c.display_name AS task_title,
- COALESCE(NULLIF(r.title,''),NULLIF(left(regexp_replace(r.instruction,'[[:space:]]+',' ','g'),175),''),'MCP task request') AS label"""
+ COALESCE(num.description,NULLIF(r.title,''),NULLIF(left(regexp_replace(r.instruction,'[[:space:]]+',' ','g'),175),''),'Description not retained') AS label"""
+
+
+def central_scope():
+    return " AND r.kind<>'submission' AND cc_board_destination(r.project_id,r.request_scope,c.business_objective)"
+
+
+def task_number(project, item):
+    with database() as db:
+        row=db.execute("SELECT taskboard_number(number) AS label FROM taskboard_item WHERE project_id=%s AND item_id=%s",
+                       (project,item)).fetchone()
+        return row["label"] if row else None
 
 
 @router.get("/taskboard/mcp-requests")
 def board_requests(project_id: UUID | None = None):
     with database() as db:
-        return db.execute("SELECT " + COLUMNS + SOURCE + (" AND r.project_id=%s" if project_id else "") +
+        return db.execute("SELECT " + COLUMNS + SOURCE + central_scope() + (" AND r.project_id=%s" if project_id else "") +
                           " ORDER BY r.received_at DESC NULLS LAST,r.request_id", (project_id,) if project_id else ()).fetchall()
 
 
-def lookup(reference, projects=None, *, include_instruction=False):
+@router.get("/projects/{project_id}/mcp-requests")
+def workspace_requests(project_id: UUID):
+    with database() as db:
+        return db.execute("SELECT "+COLUMNS+SOURCE+" AND r.project_id=%s AND r.kind<>'submission' ORDER BY r.received_at DESC NULLS LAST,r.request_id",
+                          (project_id,)).fetchall()
+
+
+def lookup(reference, projects=None, *, include_instruction=False,central=False):
     key = str(reference).lower()
     if not re.fullmatch(r"(?:[a-f0-9]{24}|[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})",key):
         raise LookupError("Receipt unavailable")
@@ -105,7 +130,7 @@ def lookup(reference, projects=None, *, include_instruction=False):
         args.append(list(projects))
     with database() as db:
         fields = COLUMNS + ",r.instruction" if include_instruction else COLUMNS
-        rows = db.execute("SELECT " + fields + SOURCE + condition, args).fetchall()
+        rows = db.execute("SELECT " + fields + SOURCE + (central_scope() if central else "") + condition, args).fetchall()
     if len(rows) != 1:
         raise LookupError("Receipt unavailable")
     return rows[0]
@@ -114,7 +139,7 @@ def lookup(reference, projects=None, *, include_instruction=False):
 @router.get("/taskboard/mcp-requests/{reference}")
 def board_request(reference: str, project_id: UUID | None = None):
     try:
-        return lookup(reference, [project_id] if project_id else None, include_instruction=True)
+        return lookup(reference, [project_id] if project_id else None, include_instruction=True, central=not bool(os.getenv("SMD_PORTAL_TASK")))
     except LookupError:
         raise HTTPException(404,"MCP request unavailable.") from None
 
@@ -139,7 +164,10 @@ def request_activity(project_id: UUID, request_id: UUID, before: int | None = No
     from cc_codex import workspace_actions
     from external_mcp_tasks import WorkspaceUnavailable
     from cc_codex import workspace_chat_request
-    request = board_request(str(request_id), project_id)
+    try:
+        request=lookup(str(request_id),[project_id])
+    except LookupError:
+        raise HTTPException(404,"MCP request unavailable.") from None
     if before is not None and before < 1:
         raise HTTPException(422, "Invalid activity cursor.")
     receipt, task = request["receipt"], request["task_id"]
