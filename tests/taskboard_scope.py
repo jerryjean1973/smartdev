@@ -7,20 +7,18 @@ from store import database
 
 def run():
     import os
-    schema='cc_board_test_'+uuid4().hex
-    setting=os.environ.get('PGOPTIONS')
-    with database() as db:
-        db.execute('CREATE SCHEMA '+schema)
-    try:
-        os.environ['PGOPTIONS']='-c search_path='+schema
-        assertions()
-    finally:
-        if setting is None:
-            os.environ.pop('PGOPTIONS',None)
-        else:
-            os.environ['PGOPTIONS']=setting
-        with database() as db:
-            db.execute('DROP SCHEMA '+schema+' CASCADE')
+    import psycopg
+    from psycopg.conninfo import make_conninfo
+    name='cc_board_test_'+uuid4().hex
+    original=os.environ['DATABASE_URL']
+    with psycopg.connect(original,autocommit=True) as admin:
+        admin.execute('CREATE DATABASE '+name+' TEMPLATE template0')
+        try:
+            os.environ['DATABASE_URL']=make_conninfo(original,dbname=name)
+            assertions()
+        finally:
+            os.environ['DATABASE_URL']=original
+            admin.execute('DROP DATABASE '+name)
 
 
 def assertions():

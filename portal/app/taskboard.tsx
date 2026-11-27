@@ -612,11 +612,11 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
   return <section className="wb-taskboard" aria-labelledby="taskboard-heading">
     <div className="wb-taskboard-header">
       <h1 id="taskboard-heading">Taskboard</h1>
-      <div className="wb-taskboard-options"><label>Project <select value={projectFilter} onChange={event => setProjectFilter(event.target.value)}>
+      <div className="wb-taskboard-options"><label>Project <select aria-label="Project" value={projectFilter} onChange={event => setProjectFilter(event.target.value)}>
         <option value="">All projects</option>
         {projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
       </select></label>
-      <label>Source <select value={source} onChange={event=>setSource(event.target.value as 'all'|'mcp'|'ui')}>
+      <label>Source <select aria-label="Source" value={source} onChange={event=>setSource(event.target.value as 'all'|'mcp'|'ui')}>
         <option value="all">All sources</option><option value="mcp">MCP only</option><option value="ui">UI only</option>
       </select></label>
       <label>Group by <select value={grouping} onChange={event => setGrouping(event.target.value as Grouping)}>
@@ -675,7 +675,7 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
         {item} <span>{outcomeRows.filter(row => matches(item, row)).length}</span>
       </button>)}
     </nav>
-    <label className="wb-outcome-filter">Execution outcome <select value={execution} onChange={e=>setExecution(e.target.value as Outcome)}>
+    <label className="wb-outcome-filter">Execution outcome <select aria-label="Execution outcome" value={execution} onChange={e=>setExecution(e.target.value as Outcome)}>
       {outcomes.map(item=><option value={item} key={item}>{item} ({candidates.filter(row=>matches(filter,row) && (item==='All outcomes'||outcome(row)===item)).length})</option>)}</select></label>
     {view==='mcp' ? <RequestInbox items={visible.map(row=>row.request!)} reference={receipt} loaded={mcp.loaded} error={mcp.error}
       group={requestGroupLabel}/> : <>
