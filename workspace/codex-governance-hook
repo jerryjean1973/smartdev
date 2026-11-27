@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""Restore managed task context and enforce the assigned worktree at supported hooks."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+from command_api import exchange
+
+
+def task_context():
+    name = os.getenv("COMMAND_OBJECTIVE_CONTEXT")
+    if not name:
+        return None
+    try:
+        return json.loads(Path(name).read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def authorized(event, context):
+    if not context:
+        return False
+    try:
+        worktree = Path(context["directory"])
+        tool_input = event.get("tool_input") or {}
+        requested = tool_input.get("workdir") or event.get("cwd") or str(worktree)
+        cwd = (worktree / requested).resolve()
+        if not cwd.is_relative_to(worktree):
+            return False
+        branch = subprocess.run(["git", "symbolic-ref", "--short", "HEAD"], cwd=worktree,
+                                capture_output=True, text=True, timeout=1).stdout.strip() or "detached"
+        if branch != context["branch"]:
+            return False
+        if context.get("conversation"):
+            main = (Path("/projects") / os.environ["PROJECT_NAME"] / "repository").resolve()
+            if worktree != main or context["mode"] != "workspace-write":
+                return False
+        result = exchange(context["authorization"], "/conversation" if context.get("conversation") else "/governance",
+                          timeout=2)
+        return result.get("ok") is True and result["mode"] == context["mode"]
+    except (AttributeError, KeyError, OSError, ValueError, TypeError, subprocess.SubprocessError):
+        return False
+
+
+def decision(event, context):
+    name = event["hook_event_name"]
+    if name == "SessionStart":
+        if not authorized(event, context):
+            reason = "Start coding tasks through Codex Project Chat or codex-task with an active assignment."
+            return {"continue": False, "stopReason": reason, "systemMessage": reason}
+        guidance = ("Use screenshot URL --selector CSS --out /tmp/proof.png --publish for visual fixes. "
+                    "Include its verified evidence link and the observed result. Use --login for a project's "
+                    "enrolled application or Coder origin. workspace-dev-login verifies the default organization. "
+                    "Use git fetch or a fast-forward pull in the assigned checkout, preserving local changes.")
+        if event.get("source") == "compact":
+            guidance = context["recovery"] + "\n" + guidance
+        return {"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":guidance}}
+    if name != "PreToolUse" or authorized(event, context):
+        return {}
+    return {"hookSpecificOutput": {
+        "hookEventName": "PreToolUse", "permissionDecision": "deny",
+        "permissionDecisionReason": "Governance denied the operation outside the active branch and worktree assignment.",
+    }}
+
+
+if __name__ == "__main__":
+    print(json.dumps(decision(json.load(sys.stdin), task_context())))

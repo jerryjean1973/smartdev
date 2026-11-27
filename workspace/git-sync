@@ -1,0 +1,386 @@
+#!/usr/bin/env python3
+"""Synchronize authorized GitHub checkouts without replacing their working state."""
+import fcntl
+import hashlib
+import json
+import os
+import posixpath
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import urlsplit
+
+NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*")
+WORKSPACE = re.compile(r"(?:p|project)-[A-Za-z0-9-]+")
+REPOSITORY = os.getenv("PROJECT_REPOSITORY", "")
+HELPER = "/usr/local/bin/git-sync"
+SECRET = re.compile(
+    r"(?:https?|ssh)://[^\s/@]+(?::[^\s/@]*)?@|(?<=://)[^\s]+\?[^\s]+|"
+    r"authorization\s*[:=]\s*(?:Basic|Bearer)\s+[^\s]+|"
+    r"\b(?:github_pat_|gh[pousr]_|sk-|hvs\.)[A-Za-z0-9_.-]{8,}|"
+    r"(?:authorization|password|token|secret)\s*[:=]\s*[^\s]+", re.I)
+TRANSIENT = re.compile(r"timed? out|could not resolve|temporary failure|connection (?:reset|refused|closed)|\b50[234]\b|early eof|remote end hung up", re.I)
+
+
+def credential():
+    if len(sys.argv) < 3 or sys.argv[2] != "get":
+        return
+    values = dict(line.strip().split("=", 1) for line in sys.stdin if "=" in line)
+    target = values.get("path", "").removesuffix(".git")
+    allowed = os.getenv("SMARTDEV_GIT_AUTH_TARGET", REPOSITORY)
+    if (values.get("protocol") != "https" or values.get("host") != "github.com"
+            or not NAME.fullmatch(target) or target.casefold() != allowed.casefold()):
+        return
+    coder = shutil.which("coder") or next((str(path) for path in Path("/tmp").glob("coder.*/coder")
+                                          if path.is_file() and not path.is_symlink()), None)
+    if not coder:
+        return
+    try:
+        result = subprocess.run([coder, "external-auth", "access-token", "github"], capture_output=True,
+                                timeout=12, text=True)
+    except (OSError, subprocess.TimeoutExpired):
+        return
+    password = result.stdout.strip()
+    if result.returncode == 0 and re.fullmatch(r"[A-Za-z0-9_.-]{16,512}", password):
+        sys.stdout.write("username=x-access-token\npassword=" + password + "\n")
+
+
+def identity(url):
+    if url.startswith("git@github.com:"):
+        candidate = url.removeprefix("git@github.com:")
+    else:
+        try:
+            parsed = urlsplit(url)
+        except ValueError:
+            return None
+        if (parsed.query or parsed.fragment or parsed.password or
+                (parsed.scheme, parsed.netloc) not in {("https", "github.com"), ("ssh", "git@github.com")}):
+            return None
+        candidate = parsed.path.removeprefix("/")
+    candidate = candidate.removesuffix(".git")
+    return candidate if NAME.fullmatch(candidate) else None
+
+
+def resolve_identity(url, parent):
+    if url.startswith(("./", "../")) and parent:
+        candidate = posixpath.normpath(parent + ".git/" + url).removesuffix(".git")
+        return candidate if NAME.fullmatch(candidate) else None
+    return identity(url)
+
+
+def git(cwd, *args, timeout=90, target=None):
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_TRACE") and key != "GIT_CURL_VERBOSE"}
+    env.update(GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="/bin/false", GIT_LFS_SKIP_SMUDGE="1",
+               LC_ALL="C", SMARTDEV_GIT_AUTH_TARGET=target or REPOSITORY)
+    env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10")
+    helpers = []
+    if target:
+        for owner in ("--system", "--global"):
+            config = subprocess.run(["git", "config", owner, "--get-all", "credential.helper"],
+                                    cwd=cwd, env=env, capture_output=True, text=True, timeout=5)
+            for helper in config.stdout.splitlines():
+                if helper:
+                    helpers.append(helper)
+                else:
+                    helpers.clear()
+    flags = ["-c", "credential.helper="]
+    for helper in [*helpers, f"!{HELPER} credential"]:
+        flags.extend(("-c", f"credential.helper={helper}"))
+    try:
+        return subprocess.run(
+            ["git", *flags, "-c", "credential.useHttpPath=true", "-c", "protocol.file.allow=never",
+             "-c", "protocol.ext.allow=never", "-c", "http.followRedirects=false", *args],
+            cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(args, 124, "", "Git transport timed out.")
+
+
+def transport(cwd, *args, target, timeout=45):
+    for attempt in range(2):
+        result = git(cwd, *args, timeout=timeout, target=target)
+        if result.returncode == 0 or not TRANSIENT.search(result.stderr) or attempt:
+            return result
+        time.sleep(1)
+
+
+def require(result, description):
+    if result.returncode:
+        raise RuntimeError(description)
+    return result.stdout
+
+
+def issue(issues, kind, message, *, repository=None, path=None, stderr=""):
+    row = {"kind":kind, "message":message}
+    if repository:
+        row["repository"] = repository
+    if path:
+        row["path"] = path
+    if stderr:
+        row["stderr"] = SECRET.sub("[redacted]", stderr).strip()[-3000:]
+    issues.append(row)
+
+
+def failure(issues, result, operation, target, path=None):
+    error=result.stderr
+    if TRANSIENT.search(error):
+        kind, reason = "network_timeout", "Git transport failed or timed out"
+    elif re.search(r"authentication failed|could not read username|terminal prompts disabled|invalid username|permission denied \(publickey", error, re.I):
+        kind, reason = "authentication_rejected", "Git credentials are unavailable or rejected"
+    elif re.search(r"repository not found|access denied|authorization failed|forbidden|\b403\b", error, re.I):
+        kind, reason = "permission_denied", "Git access was denied or the repository does not exist"
+    elif re.search(r"not our ref|did not contain|direct fetching of that commit|reference is not a tree|unadvertised object", error, re.I):
+        kind, reason = "pin_unavailable", "the pinned commit is unavailable"
+    elif re.search(r"host key verification|remote host identification", error, re.I):
+        kind, reason = "host_verification", "the SSH host key could not be verified"
+    else:
+        kind, reason = "git_failed", "Git could not complete the operation"
+    issue(issues,kind,f"{operation} {target}: {reason}.",repository=target,path=path,stderr=error)
+
+
+def gitlinks(checkout):
+    links = {}
+    for entry in require(git(checkout, "ls-files", "--stage", "-z"), "Could not inspect Git index.").split("\0"):
+        if not entry:
+            continue
+        metadata, path = entry.split("\t", 1)
+        mode, pin, stage = metadata.split()
+        if mode == "160000":
+            links[path] = pin if stage == "0" and path not in links else None
+    return links
+
+
+def module_config(checkout):
+    manifest = checkout / ".gitmodules"
+    if not manifest.is_file() or manifest.is_symlink():
+        return {}
+    result = git(checkout,"config","--no-includes","--null","--file",".gitmodules","--get-regexp",r"^submodule\..*\.(path|url)$")
+    if result.returncode not in (0,1):
+        return {}
+    values = dict(entry.split("\n",1) for entry in result.stdout.split("\0") if entry and "\n" in entry)
+    return {value:(key[:-5],values.get(key[:-5]+".url","")) for key,value in values.items() if key.endswith(".path")}
+
+
+def checkout_head(directory):
+    if not (directory / ".git").exists():
+        return None
+    top=git(directory,"rev-parse","--show-toplevel")
+    if top.returncode or Path(top.stdout.strip()).resolve()!=directory:
+        return None
+    head=git(directory,"rev-parse","--verify","HEAD")
+    return head.stdout.strip() if head.returncode==0 else None
+
+
+def local_metadata(directory,workspace):
+    metadata=git(directory,"rev-parse","--absolute-git-dir")
+    return metadata.returncode==0 and Path(metadata.stdout.strip()).resolve().is_relative_to(workspace)
+
+def provision_modules(checkout, parent, issues, root=None, budget=None, depth=0):
+    root=checkout if root is None else root
+    budget=[256] if budget is None else budget
+    links=gitlinks(checkout)
+    if not links:
+        return
+    manifest_state=git(checkout,"status","--porcelain","--",".gitmodules")
+    if manifest_state.returncode or manifest_state.stdout.strip():
+        for relative in links:
+            location=(checkout / relative).relative_to(root).as_posix()
+            issue(issues,"workspace_conflict",f"The .gitmodules file for {location} has local changes. Preserved configuration.",path=location)
+        return
+    declarations=module_config(checkout)
+    workspace=root.parent.parent if root.parent.name=="worktrees" else root.parent
+    for relative,pin in links.items():
+        budget[0]-=1
+        if budget[0]<0 or depth>=10:
+            issue(issues,"scan_limit","Submodule initialization exceeded the workspace limits.")
+            return
+        directory=checkout / relative
+        location=directory.relative_to(root).as_posix()
+        key,url=declarations.get(relative,("",""))
+        target=resolve_identity(url,parent)
+        if not target or not pin or not directory.is_relative_to(checkout) or directory.resolve()!=directory:
+            kind="invalid_submodule_url" if not target else "workspace_conflict"
+            issue(issues,kind,f"Invalid URL, path, or Git pin for submodule {location}.",path=location)
+            continue
+        if (directory / ".git").exists() and not local_metadata(directory,workspace):
+            issue(issues,"workspace_conflict",f"Git metadata for {location} is outside the workspace or invalid.",
+                  repository=target,path=location)
+            continue
+        existing=checkout_head(directory)
+        if existing and existing!=pin:
+            issue(issues,"workspace_conflict",f"Submodule {location} is checked out at a different commit. Preserved its working tree.",
+                  repository=target,path=location)
+            continue
+        if not existing and directory.is_dir() and any(item.name!=".git" for item in directory.iterdir()):
+            issue(issues,"workspace_conflict",f"Uninitialized submodule {location} contains existing files. Preserved them.",
+                  repository=target,path=location)
+            continue
+        if existing:
+            origin=git(directory,"config","--get","remote.origin.url")
+            if origin.returncode==0 and (identity(origin.stdout.strip()) or "").casefold()!=target.casefold():
+                issue(issues,"workspace_conflict",f"Submodule {location} has a different remote. Preserved its configuration.",
+                      repository=target,path=location)
+                continue
+        initialized=git(checkout,"submodule","init","--",relative)
+        if initialized.returncode:
+            failure(issues,initialized,"Initialize",target,location)
+            continue
+        local=git(checkout,"config","--local","--get",key+".url").stdout.strip()
+        if (identity(local) or "").casefold()!=target.casefold():
+            synced=git(checkout,"submodule","sync","--",relative)
+            local=git(checkout,"config","--local","--get",key+".url").stdout.strip()
+            if synced.returncode or (identity(local) or "").casefold()!=target.casefold():
+                issue(issues,"invalid_submodule_url",f"Submodule URL could not be synchronized for {location}.",
+                      repository=target,path=location)
+                continue
+        if not existing:
+            if (directory / ".git").exists():
+                remote=git(directory,"config","--get","remote.origin.url")
+                if remote.returncode==0 and (identity(remote.stdout.strip()) or "").casefold()!=target.casefold():
+                    issue(issues,"workspace_conflict",f"Interrupted submodule {location} has a different origin.",
+                          repository=target,path=location)
+                    continue
+                if remote.returncode!=0:
+                    require(git(directory,"remote","add","origin",local),"Could not restore the interrupted submodule origin.")
+                fetched=transport(directory,"fetch","--no-recurse-submodules","origin",pin,target=target,timeout=55)
+                if fetched.returncode:
+                    failure(issues,fetched,"Fetch pinned submodule",target,location)
+                    continue
+                result=git(directory,"checkout","--detach",pin)
+            else:
+                result=transport(checkout,"submodule","update","--init","--checkout","--",relative,target=target,timeout=55)
+            if result.returncode:
+                failure(issues,result,"Initialize pinned submodule",target,location)
+                continue
+        if checkout_head(directory)!=pin:
+            issue(issues,"initialization_incomplete",f"Submodule {location} did not resolve to its pinned commit.",
+                  repository=target,path=location)
+            continue
+        provision_modules(directory,target,issues,root,budget,depth+1)
+
+
+def reconcile(project, registry, inspect, checkout=None):
+    checkout=checkout or project / "repository"
+    issues=[]
+    registry["issues"]=issues
+    url=f"https://github.com/{REPOSITORY}.git"
+    registry.update(provider="github",repositoryUrl=url,workspace=project.name)
+    if not inspect:
+        registry["submodulesComplete"]=False
+    if checkout == project / "repository" and not (checkout / ".git").exists():
+        if checkout.exists() or checkout.is_symlink():
+            issue(issues,"workspace_conflict","Checkout path already contains local files. Preserved them.")
+            return "blocked"
+        with tempfile.TemporaryDirectory(prefix=".clone-",dir=project) as staging:
+            target=Path(staging) / "repository"
+            result=transport(project,"clone","--",url,str(target),target=REPOSITORY,timeout=120)
+            if result.returncode:
+                failure(issues,result,"Clone",REPOSITORY)
+                return "blocked"
+            require(git(target,"fsck","--connectivity-only","--no-dangling"),"Cloned Git objects failed verification.")
+            target.rename(checkout)
+    origin=git(checkout,"config","--get","remote.origin.url")
+    if (checkout.resolve()!=checkout or not local_metadata(checkout,project) or
+            (identity(origin.stdout.strip()) or "").casefold()!=REPOSITORY.casefold()):
+        issue(issues,"workspace_conflict","Checkout origin does not match the configured GitHub repository. Preserved local files.")
+        return "blocked"
+    head=checkout_head(checkout)
+    if not head:
+        issue(issues,"initialization_incomplete","The existing Git checkout has no committed HEAD. Preserved local files.")
+        return "blocked"
+    branch=git(checkout,"branch","--show-current").stdout.strip()
+    dirty=bool(require(git(checkout,"status","--porcelain=v1"),"Could not inspect working tree.").strip())
+    registry.update(currentCommit=head,branch=branch or None,dirty=dirty)
+    if checkout == project / "repository":
+        response=transport(checkout,"fetch","--no-recurse-submodules","origin",target=REPOSITORY)
+        if response.returncode:
+            failure(issues,response,"Fetch",REPOSITORY)
+        else:
+            remote=git(checkout,"symbolic-ref","--short","refs/remotes/origin/HEAD")
+            if remote.returncode==0:
+                default=remote.stdout.strip().removeprefix("origin/")
+                registry.update(defaultBranch=default,integrationBranch=registry.get("integrationBranch") or default)
+                upstream=f"refs/remotes/origin/{registry['integrationBranch']}"
+                remote_commit=git(checkout,"rev-parse","--verify",upstream).stdout.strip()
+                registry["remoteCommit"]=remote_commit or None
+                if branch==registry["integrationBranch"] and remote_commit and remote_commit!=head:
+                    issue(issues,"upstream_changed","Incoming Git commits are available. Preserved the selected checkout.")
+    if not inspect:
+        start=len(issues)
+        provision_modules(checkout,REPOSITORY,issues)
+        registry["submodulesComplete"]=len(issues)==start
+        attributes=checkout / ".gitattributes"
+        if attributes.is_file() and "filter=lfs" in attributes.read_text(errors="replace"):
+            registry["usesLfs"]=True
+            if not dirty:
+                result=transport(checkout,"lfs","pull","origin",target=REPOSITORY,timeout=60)
+                if result.returncode:
+                    failure(issues,result,"Fetch Git LFS objects for",REPOSITORY)
+    return "attention" if issues else "ready"
+
+
+def main(project_root=Path("/projects")):
+    if len(sys.argv)>1 and sys.argv[1]=="credential":
+        return credential()
+    if not REPOSITORY:
+        return
+    name=os.environ.get("PROJECT_NAME","")
+    if not WORKSPACE.fullmatch(name) or not NAME.fullmatch(REPOSITORY):
+        sys.exit("Invalid workspace or GitHub repository identity.")
+    project=project_root / name
+    config=project / "config"
+    config.mkdir(parents=True,exist_ok=True)
+    checkout=project / "repository"
+    status=config / "git-sync.json"
+    if "--preview-worktree" in sys.argv:
+        args=sys.argv[sys.argv.index("--preview-worktree")+1:]
+        relative=args[0] if args else ""
+        if not re.fullmatch(r"worktrees/task-[a-f0-9-]{36}",relative):
+            sys.exit("Invalid preview worktree.")
+        target=project / relative
+        rows=require(git(checkout,"worktree","list","--porcelain","-z"),"Could not inspect project worktrees.")
+        if target.resolve()!=target or f"worktree {target}" not in rows.split("\0"):
+            sys.exit("Preview worktree is not registered.")
+        checkout=target
+        status=config / (checkout.name+".git-sync.json")
+    inspect="--inspect" in sys.argv
+    lock_id=hashlib.sha256(str(checkout).encode()).hexdigest()[:24]
+    with (config / "git-sync.lock").open("a") as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        try:
+            registry=json.loads(status.read_text())
+        except (FileNotFoundError,ValueError):
+            registry={}
+        if ("--recent" in sys.argv and status.exists() and time.time()-status.stat().st_mtime<90
+                and (inspect or registry.get("submodulesComplete"))):
+            return 1 if registry.get("status")=="blocked" else 0
+        registry["checkedAt"]=datetime.now(timezone.utc).isoformat()
+        with (config / f"codex-{lock_id}.lock").open("a") as task_lock:
+            try:
+                fcntl.flock(task_lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            except BlockingIOError:
+                print("The checkout has an active task; preserved its working state.",file=sys.stderr)
+                return 0
+            try:
+                registry["status"]=reconcile(project,registry,inspect,checkout)
+            except (RuntimeError,OSError,ValueError) as error:
+                registry["submodulesComplete"]=False
+                registry["status"]="blocked"
+                issue(registry.setdefault("issues",[]),"git_failed",str(error) if isinstance(error,RuntimeError)
+                      else "Could not reconcile the configured Git checkout.")
+        registry["notes"]=[entry["message"] for entry in registry["issues"]]
+        with tempfile.NamedTemporaryFile(mode="w",dir=config,delete=False) as output:
+            json.dump(registry,output)
+        Path(output.name).replace(status)
+        for note in registry["notes"]:
+            print(note,file=sys.stderr)
+        return 1 if registry["status"]=="blocked" else 0
+
+
+if __name__=="__main__":
+    sys.exit(main())
