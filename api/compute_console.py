@@ -48,7 +48,14 @@ def inventory():
         rows = db.execute(INVENTORY + " ORDER BY t.queued_at DESC,t.id").fetchall()
         tenants = tenant_catalog(db)
     # Build metadata belongs to the installer. Only publish the fields displayed by the console.
+    from vault import service_available
+    vault_ready=service_available() if any(r["configuration_state"] in {"owner_active","tenant"} for r in rows) else True
     for row in rows:
+        if not vault_ready:
+            if row["configuration_state"]=="owner_active":
+                row["configuration_state"]="owner_unavailable"
+            elif row["configuration_state"]=="tenant" and row["tenant_default_count"]:
+                row["configuration_state"]="tenant_unavailable"
         row["project_manifest"] = [
             {key: project[key] for key in ("id", "name", "repository", "revision", "hostname", "preview_hostname", "tenant_setup") if key in project}
             for project in row["project_manifest"] or []
@@ -129,6 +136,8 @@ def assign(task_id: UUID, body: Assignment):
             raise HTTPException(422, "Choose a registered tenant.")
         if tenant["id"] == current["tenant_id"]:
             return current
+        from smd_tenant_access import confirm_defaults
+        confirm_defaults(db,tenant["id"])
         live=db.execute("""SELECT t.status,t.instance_id,t.reconciled_at,r.connections->>'portal_url' AS portal,
                           i.public_key,t.dns_zone FROM smd_deploy_task t LEFT JOIN smd_deploy_receipt r
                           ON r.task_id=t.id AND r.instance_id=t.instance_id AND r.verified_at IS NOT NULL

@@ -66,7 +66,7 @@ type Job = {
   observed_revision: string | null;
   tenant_default_count?: number;
   assignment_version: number;
-  configuration_state?: 'owner_active' | 'owner_pending' | 'tenant' | 'inactive';
+  configuration_state?: 'owner_unavailable' | 'tenant_unavailable' | 'owner_active' | 'owner_pending' | 'tenant' | 'inactive';
   custom_domains?: Record<string, Partial<Record<'DEV'|'QA'|'PREPROD'|'PROD', string>>>;
   portal_account: string;
   tenant_id: string | null;
@@ -118,7 +118,7 @@ function Chip({ children }: { children: string }) {
   );
 }
 function configuration(j: Job) {
-  return ({owner_active:'Owner integrations active',owner_pending:'Owner access awaiting enrollment',
+  return ({owner_unavailable:'Owner credentials unavailable',tenant_unavailable:'Tenant defaults unavailable',owner_active:'Owner integrations active',owner_pending:'Owner access awaiting enrollment',
     tenant:'Tenant credentials',inactive:'No active configuration'} as const)[j.configuration_state || 'inactive'];
 }
 function DeploymentDomains({job}:{job:Job}) {

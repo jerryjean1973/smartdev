@@ -144,6 +144,14 @@ def tenant_value(db,tenant,env,name):
     return ((value or {}).get("data",{}).get("data") or {}).get("value")
 
 
+def confirm_defaults(db,tenant):
+    for item in db.execute("SELECT reference FROM smd_tenant_default_secret WHERE tenant_id=%s FOR SHARE",(tenant,)):
+        stored=call("GET","data/"+item["reference"],missing=True)
+        value=((stored or {}).get("data",{}).get("data") or {}).get("value")
+        if not isinstance(value,str) or not value:
+            raise HTTPException(409,"The destination tenant has an unavailable default secret.")
+
+
 def login_check(task,state,body):
     try:
         supplied=json.loads(body)["password"]

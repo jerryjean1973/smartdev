@@ -25,6 +25,28 @@ class SecretVersion(BaseModel):
     version: int = Field(ge=1)
 
 
+_availability=(0.0,False)
+
+
+def service_available():
+    import time
+    global _availability
+    now=time.monotonic()
+    if now<_availability[0]:
+        return _availability[1]
+    ready=False
+    try:
+        token=Path("/run/command-vault/token").read_text().strip()
+        with httpx.Client(timeout=2,trust_env=False,follow_redirects=False) as client:
+            reply=client.get(os.environ["OPENBAO_ADDR"].rstrip("/")+"/v1/auth/token/lookup-self",
+                             headers={"X-Vault-Token":token})
+            ready=reply.status_code==200
+    except (OSError,KeyError,httpx.HTTPError):
+        pass
+    _availability=(now+15,ready)
+    return ready
+
+
 def owner_project(project_id):
     with database() as db:
         if not db.execute("SELECT 1 FROM projects WHERE id=%s AND NOT archived", (project_id,)).fetchone():
