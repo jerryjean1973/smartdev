@@ -1,6 +1,8 @@
 """Exercise the workspace agent and repair its managed tools on a failed check."""
 import json
+import os
 from pathlib import Path
+import re
 import subprocess
 import time
 
@@ -8,6 +10,26 @@ TOOLS=Path("/opt/smartdev-workspace-tools")
 STATE=Path("/var/lib/smartdev-workspace-tools")
 REPAIR=Path("/run/smartdev-workspace-tool-repair")
 ENTRY='cd "/projects/$PROJECT_NAME/repository" && exec codex sandbox -c sandbox_mode=workspace-write -c sandbox_workspace_write.network_access=true -- workspace-tools-check'
+PROJECT=re.compile(r"p-[a-z2-7]{26}")
+
+def repair_git_metadata(obj):
+    """Restore only the enrolled runner's Git metadata ownership."""
+    try:
+        environment=dict(item.split("=",1) for item in obj["Config"]["Env"] if "=" in item)
+        project=environment.get("PROJECT_NAME","")
+        mounts=[m for m in obj["Mounts"] if m["Destination"]=="/projects" and m["RW"]]
+        if not PROJECT.fullmatch(project) or len(mounts)!=1:
+            return False
+        root=Path(mounts[0]["Source"]).resolve()
+        metadata=root/project/"repository"/".git"
+        if metadata.is_symlink() or not metadata.is_dir() or not metadata.resolve().is_relative_to(root):
+            return False
+        for path in (metadata,*metadata.rglob("*")):
+            if not path.is_symlink():
+                os.chown(path,1000,1000,follow_symlinks=False)
+    except (KeyError,OSError,TypeError):
+        return False
+    return True
 
 def verify(cid):
     try:
@@ -51,6 +73,8 @@ def main():
             continue
         workspace=Path(mount["Source"]).name
         stage=verify(cid)
+        if stage=="git" and repair_git_metadata(obj):
+            stage=verify(cid)
         if stage!="healthy":
             if stage=="account":
                 subprocess.run(["python3",str(TOOLS/"accounts.py"),cid,"--verify"],timeout=100)

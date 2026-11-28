@@ -403,6 +403,7 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
 
 
   function renderTask({project, task, title, status, running, ccActivity,request}: Row) {
+    const taskContactReady = !request || request.task_admitted;
     if (request && !(request.kind==='create' && request.task_id===task.id)) {
       const detail = request.waiting_for_input ? 'Awaiting input' : request.execution_code != null && request.execution_code!==0 ? 'Execution failed' : '';
       return <li className="wb-taskboard-row" key={project.id+':'+request.request_id} data-request-id={request.request_id}>
@@ -413,8 +414,12 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
           {running && <ThinkingIcon/>}</div>
           {running && <progress aria-label={title+' processing'} />}
           <div className="wb-taskboard-actions">
-            {request.task_id && onAskCc && <button type="button" onClick={()=>onAskCc(request.task_id!,title+' · MCP request '+(request.receipt || request.request_id))}>Ask CC</button>}
-            {request.task_id && <button onClick={()=>onReply(project.id,request.task_id!)}>Reply to coding agent</button>}
+            {request.task_id && onAskCc && <button type="button" disabled={!taskContactReady}
+              title={taskContactReady?undefined:'Available after the workspace accepts this task.'}
+              onClick={()=>onAskCc(request.task_id!,title+' · MCP request '+(request.receipt || request.request_id))}>Ask CC</button>}
+            {request.task_id && <button disabled={!taskContactReady}
+              title={taskContactReady?undefined:'Available after the workspace accepts this task.'}
+              onClick={()=>onReply(project.id,request.task_id!)}>Reply to coding agent</button>}
             {request.work_status==='Processed' && request.execution_code===0 && !request.waiting_for_input &&
               <button onClick={async()=>{const response=await fetch('/api/projects/'+project.id+'/mcp-tasks/'+request.request_id+'/complete',{method:'POST'});if(!response.ok)setActionError('Could not complete this request.');else setNotice('Request marked done.');}}>Mark done</button>}
           </div></div>
@@ -484,10 +489,14 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
             onClick={() => setOpen(current => current === task.id ? null : task.id)}>
             <OctagonAlert size={16} aria-hidden="true" /> Why blocked
           </button>}
-          {onAskCc && <button type="button" aria-label={'Ask CC about ' + title} onClick={() => onAskCc(task.id, title)}>
+          {onAskCc && <button type="button" aria-label={'Ask CC about ' + title} disabled={!taskContactReady}
+            title={taskContactReady?undefined:'Available after the workspace accepts this task.'}
+            onClick={() => onAskCc(task.id, title)}>
             Ask CC
           </button>}
-          <button type="button" disabled={!project.workspace_url} onClick={() => onReply(project.id, task.id)}>
+          <button type="button" disabled={!project.workspace_url || !taskContactReady}
+            title={taskContactReady?undefined:'Available after the workspace accepts this task.'}
+            onClick={() => onReply(project.id, task.id)}>
             Reply to coding agent
           </button>
           <button type="button" aria-label={'Approve ' + title} title="Approve task"
@@ -616,8 +625,12 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
       updated:task.updated_at || run?.finished_at || run?.started_at || task.created_at,evidence:evidence?evidence+' screenshots':'—',
       active:row.running,details:()=>null};
     return {...line, details:()=><div>{request && <RequestDetails item={request} expanded card/>}<ul className="wb-taskboard-list">{renderTask(row)}</ul></div>,
-      actions:<>{onAskCc && <button type="button" onClick={()=>onAskCc(underlying,row.title+(request?' · MCP request '+request.request_id:''))}>Ask CC</button>}
-        <button type="button" onClick={()=>onReply(project.id,underlying)}>Reply to coding agent</button></>};
+      actions:<>{onAskCc && <button type="button" disabled={Boolean(request && !request.task_admitted)}
+        title={request && !request.task_admitted?'Available after the workspace accepts this task.':undefined}
+        onClick={()=>onAskCc(underlying,row.title+(request?' · MCP request '+request.request_id:''))}>Ask CC</button>}
+        <button type="button" disabled={!project.workspace_url || Boolean(request && !request.task_admitted)}
+          title={request && !request.task_admitted?'Available after the workspace accepts this task.':undefined}
+          onClick={()=>onReply(project.id,underlying)}>Reply to coding agent</button></>};
   }
 
   return <section className="wb-taskboard" aria-labelledby="taskboard-heading">

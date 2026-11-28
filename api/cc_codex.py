@@ -40,6 +40,15 @@ def task_context(task_id, include_context=False):
                 SELECT 1 FROM objective_presentation x WHERE x.objective_id=t.id AND x.excluded_from_board)
         """, (task_id,)).fetchone()
         if not task:
+            pending = db.execute("""
+                SELECT delivery,admission FROM mcp_task_request
+                WHERE task_id=%s ORDER BY received_at DESC LIMIT 1
+            """, (task_id,)).fetchone()
+            if pending:
+                raise HTTPException(
+                    409,
+                    "Task admission is not complete. Ask CC will be available after the workspace accepts the task.",
+                )
             raise HTTPException(404, "Task not found.")
         if not include_context:
             return None

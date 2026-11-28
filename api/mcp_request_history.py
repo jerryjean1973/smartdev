@@ -96,6 +96,7 @@ COLUMNS = """r.request_id,r.project_id,p.name AS project_name,r.task_id,r.task_i
  architect.id AS architect_review_id,architect.execution_id AS architect_execution_id,
  architect.model AS architect_model,architect.classification AS architect_classification,
  architect.coherence_approved AS architect_approved,architect.reviewed_at AS architect_reviewed_at,
+ (r.delivery='accepted' AND c.id IS NOT NULL) AS task_admitted,
  CASE WHEN bo.id IS NOT NULL THEN 'objective' WHEN assignment.value='global' THEN 'global' ELSE 'unassigned' END AS scope_kind,
  c.business_objective AS origin_business_objective,c.display_name AS task_title,
  COALESCE(num.description,NULLIF(r.title,''),NULLIF(left(regexp_replace(r.instruction,'[[:space:]]+',' ','g'),175),''),'Description not retained') AS label"""

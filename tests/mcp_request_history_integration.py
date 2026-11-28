@@ -46,6 +46,7 @@ def run():
             assert pending['status']=='Pending' and pending['codex_task_id']==str(t)
             first,=history.board_requests()
             assert first['work_status']=='Pending' and first['delivery']=='unconfirmed' and first['task_id']==t and first['received_at']
+            assert first['task_admitted'] is False
             try: client.send_message(t,'A different instruction.',client_id)
             except ValueError: pass
             else: raise AssertionError('Mismatched replay accepted.')
@@ -56,6 +57,7 @@ def run():
             history.confirm_submission(db,a,first['request_id'],message,result)
             ref=history.execution_reference(a,execution)
             assert history.lookup(ref,[a])['delivery']=='accepted'
+            assert history.lookup(ref,[a])['task_admitted'] is True
             assert history.lookup(ref,[a])['work_status']=='Queued'
             db.execute("UPDATE mcp_task_request SET execution_phase='Processing' WHERE request_id=%s",(first['request_id'],))
             assert history.lookup(ref,[a])['work_status']=='Processing'

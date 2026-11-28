@@ -6,7 +6,7 @@ import {TaskTable,type TaskLine} from './task-table';
 export type McpRequest = {
   task_number?:string; tenant_name?:string; connector?:string; actor?:string; destination?:string; message_id?:string; failure_reason?:string; repair?:{summary:string; verified_at:string; evidence:string[]}|null; admission?:string|null; matched_request?:string|null; request_id:string; project_id:string; project_name:string; task_id:string|null; task_title:string|null;
   architect_review_required:boolean; architect_reviewed:boolean; architect_review_id?:string|null; architect_execution_id?:string|null; architect_model?:string|null; architect_classification?:string|null; architect_approved?:boolean|null; architect_reviewed_at?:string|null;
-  work_status:'Pending'|'Queued'|'Processing'|'Processed'|'Done'; execution_code:number|null; waiting_for_input:boolean; execution_updated_at:string|null; scope_kind:'objective'|'global'|'unassigned'; business_objective:string|null; receipt:string|null; kind:string; delivery:string; received_at:string|null; label:string;
+  task_admitted:boolean; work_status:'Pending'|'Queued'|'Processing'|'Processed'|'Done'; execution_code:number|null; waiting_for_input:boolean; execution_updated_at:string|null; scope_kind:'objective'|'global'|'unassigned'; business_objective:string|null; receipt:string|null; kind:string; delivery:string; received_at:string|null; label:string;
 };
 const zone = 'America/Toronto';
 const day = new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'});
