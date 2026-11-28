@@ -468,18 +468,36 @@ def update(root, cwd, arguments, authorize):
         }
 
 
-def register():
-    path = Path("/etc/codex/config.toml")
-    before = path.read_text() if path.exists() else ""
-    config = sys.stdin.read()
+def registered_config(before, config):
     desired = tomllib.loads(config)["mcp_servers"]["workspace_git"]
     existing = tomllib.loads(before).get("mcp_servers", {}).get("workspace_git")
     if existing == desired:
-        return
+        return before
     if existing is not None:
-        raise UpdateError("An existing system registration uses a different Git tool.")
-    combined = before.rstrip() + "\n\n" + config
+        core = ("command", "env_vars", "tool_timeout_sec")
+        if ({key: existing.get(key) for key in core} != {key: desired.get(key) for key in core}
+                or set(existing) - {*core, "tools"}):
+            raise UpdateError("An existing system registration uses a different Git tool.")
+        current_tools = existing.get("tools") or {}
+        desired_tools = desired.get("tools") or {}
+        if current_tools:
+            raise UpdateError("An existing system registration uses different Git tool approvals.")
+        sync = desired_tools.get("sync")
+        if set(desired_tools) != {"sync"} or sync != {"approval_mode": "approve"}:
+            raise UpdateError("The managed Git approval policy is invalid.")
+        combined = before.rstrip() + "\n\n[mcp_servers.workspace_git.tools.sync]\napproval_mode = \"approve\"\n"
+    else:
+        combined = before.rstrip() + "\n\n" + config
     tomllib.loads(combined)
+    return combined
+
+
+def register():
+    path = Path("/etc/codex/config.toml")
+    before = path.read_text() if path.exists() else ""
+    combined = registered_config(before, sys.stdin.read())
+    if combined == before:
+        return
     with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as output:
         output.write(combined)
     os.chmod(output.name, path.stat().st_mode & 0o777 if path.exists() else 0o644)

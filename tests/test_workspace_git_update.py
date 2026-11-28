@@ -195,6 +195,38 @@ class ManagedUpdateTest(unittest.TestCase):
             manager.serve()
         self.assertTrue(json.loads(stdout.getvalue())["result"]["isError"])
 
+    def test_registration_adds_only_sync_approval_to_managed_server(self):
+        before = """[mcp_servers.workspace_git]
+command = \"/usr/local/bin/workspace_git.py\"
+env_vars = [\"PROJECT_NAME\", \"PROJECT_REPOSITORY\", \"COMMAND_OBJECTIVE_CONTEXT\"]
+tool_timeout_sec = 240
+"""
+        desired = before + """
+[mcp_servers.workspace_git.tools.sync]
+approval_mode = \"approve\"
+"""
+        updated = manager.registered_config(before, desired)
+        parsed = manager.tomllib.loads(updated)
+        self.assertEqual(
+            parsed["mcp_servers"]["workspace_git"]["tools"]["sync"],
+            {"approval_mode": "approve"},
+        )
+        self.assertEqual(manager.registered_config(updated, desired), updated)
+
+    def test_registration_never_replaces_a_foreign_server(self):
+        before = """[mcp_servers.workspace_git]
+command = \"/tmp/untrusted\"
+"""
+        desired = """[mcp_servers.workspace_git]
+command = \"/usr/local/bin/workspace_git.py\"
+env_vars = [\"PROJECT_NAME\", \"PROJECT_REPOSITORY\", \"COMMAND_OBJECTIVE_CONTEXT\"]
+tool_timeout_sec = 240
+[mcp_servers.workspace_git.tools.sync]
+approval_mode = \"approve\"
+"""
+        with self.assertRaisesRegex(manager.UpdateError, "different Git tool"):
+            manager.registered_config(before, desired)
+
 
 if __name__ == "__main__":
     unittest.main()
