@@ -21,7 +21,7 @@ services:
       retries: 20
     networks: [architecture]
     volumes:
-      - ./models:/models:ro
+      - ./models:/models
   architect:
     image: ${SMD_API_IMAGE:?}
     restart: unless-stopped

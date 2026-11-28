@@ -72,7 +72,8 @@ def codex_preflight(lease):
 
 def architect_review(lease, instruction, plan, head, branch, architecture_context):
     payload = {
-        **lease, "instruction": instruction, "plan": plan,
+        **{key: lease[key] for key in ("execution_id", "objective_id", "conversation_id") if key in lease},
+        "instruction": instruction, "plan": plan,
         "git_head": head, "branch": branch,
         "architecture_context": architecture_context[-16000:],
     }

@@ -23,12 +23,25 @@ loader.exec_module(wrapper)
 
 class FoundationTests(unittest.TestCase):
     def setUp(self):
+        self.architect_original = wrapper.architect_review
         architect = patch.object(wrapper, "architect_review", return_value={
             "review_id": str(UUID(int=99)), "classification": "ARCHITECTURE_PRESERVING",
             "coherence_approved": True, "plan_sha256": "a" * 64, "constraints": ["preserve"],
         })
         self.architect = architect.start()
         self.addCleanup(architect.stop)
+
+    def test_architect_review_sends_only_execution_scope_not_agent_metadata(self):
+        result = {"review_id": str(UUID(int=99)), "classification": "ARCHITECTURE_PRESERVING",
+                  "coherence_approved": True, "plan_sha256": "a" * 64}
+        with patch.object(wrapper, "exchange", return_value=result) as exchange:
+            self.architect_original({"execution_id": str(UUID(int=1)),
+                                     "objective_id": str(UUID(int=2)), "agent": "codex_cli"},
+                                    "Inspect only", {"kind": "objective"}, "a" * 40,
+                                    "codex/task", "architecture")
+        payload = exchange.call_args.args[0]
+        self.assertNotIn("agent", payload)
+        self.assertEqual(exchange.call_args.args[1], "/architect-review")
 
     def test_session_signature_and_expiration(self):
         key = b"x" * 32
