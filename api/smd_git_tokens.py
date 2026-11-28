@@ -50,7 +50,7 @@ def make_token(repository):
             if str(lookup.json()["id"]) != installation:
                 raise ValueError("Repository belongs to a different GitHub App installation.")
             response = client.post(f"/app/installations/{installation}/access_tokens", json={
-                "repositories": [repository.split("/")[1]], "permissions": {"contents": "read"},
+                "repositories": [repository.split("/")[1]], "permissions": {"contents": "write"},
             })
             response.raise_for_status()
             token = response.json()["token"]
