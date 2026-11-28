@@ -90,6 +90,19 @@ def register_git_mcp(cid, assets):
                    input=snippet.read_bytes(), check=True, timeout=12)
 
 
+def configure_git_policy(cid):
+    """Keep every Coder checkout updateable without changing repository-local policy."""
+    settings = {
+        "credential.https://github.com.useHttpPath": "true",
+        "protocol.smartdev.allow": "always",
+        "pull.ff": "only",
+        "submodule.recurse": "true",
+        "fetch.recurseSubmodules": "on-demand",
+    }
+    for key, value in settings.items():
+        docker("exec", "-u", "0", cid, "git", "config", "--system", key, value)
+
+
 def provision(cid,settings):
     inspect=json.loads(docker("inspect",cid))[0]
     mount=next((Path(m["Source"]) for m in inspect["Mounts"] if m["Destination"]=="/run/command-memory" and not m["RW"]),None)
@@ -143,7 +156,7 @@ def provision(cid,settings):
     existing = subprocess.run(["docker","exec","-u","0",cid,"git","config","--system","--get-all",config_key],capture_output=True,text=True).stdout.splitlines()
     if helper not in existing:
         docker("exec","-u","0",cid,"git","config","--system","--add",config_key,helper)
-    docker("exec","-u","0",cid,"git","config","--system","credential.https://github.com.useHttpPath","true")
+    configure_git_policy(cid)
     for repo in repos:
         for url in ["https://github.com/"+repo,"git@github.com:"+repo]:
             # Core keeps upstream spelling; match the registered spelling as well as lowercase.

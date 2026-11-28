@@ -18,7 +18,11 @@ COPY command-dev-login.cjs /usr/local/lib/command-dev-login.cjs
 COPY workspace-screenshot workspace-browser-start workspace-dev-login git-remote-smartdev workspace-git-credential workspace-tools-check /usr/local/bin/
 RUN ln -s /usr/local/bin/workspace-screenshot /usr/local/bin/screenshot \
  && git config --system credential.https://github.com.useHttpPath true \
- && git config --system --add credential.https://github.com.helper /usr/local/bin/workspace-git-credential
+ && git config --system --add credential.https://github.com.helper /usr/local/bin/workspace-git-credential \
+ && git config --system protocol.smartdev.allow always \
+ && git config --system pull.ff only \
+ && git config --system submodule.recurse true \
+ && git config --system fetch.recurseSubmodules on-demand
 COPY start-project git-sync codex-task codex-governance-hook command_api.py checkpoints.py project_context.py /usr/local/bin/
 RUN chmod 755 /usr/local/bin/git-sync /usr/local/bin/start-project /usr/local/bin/codex-task /usr/local/bin/codex-governance-hook
 RUN { dpkg-query -W; node --version; codex --version; code-server --version; \
