@@ -17,6 +17,7 @@ from core import REPOSITORY, issue_session, password_digest, project_token, vali
 from store import database, notify, queue
 from mcp_request_history import router as mcp_request_history_router
 from codex_access import router as codex_access_router
+from architect_review import router as architect_review_router
 from coder_session import BRIDGE, revoke, router as coder_session_router
 from development import router as development_router
 from cc_codex import router as cc_codex_router
@@ -115,7 +116,7 @@ async def protect(request: Request, call_next):
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
         return response
-    scoped = re.fullmatch(r"/workspace-memory/([a-f0-9-]{36})(?:/governance|/codex-access|/agent-selection|/conversation|/preview-runtime|/mcp-bindings|/operator-task|/screenshots|/git-credential|/deployment-access)?", request.url.path)
+    scoped = re.fullmatch(r"/workspace-memory/([a-f0-9-]{36})(?:/governance|/codex-access|/agent-selection|/conversation|/architect-review|/preview-runtime|/mcp-bindings|/operator-task|/screenshots|/git-credential|/deployment-access)?", request.url.path)
     if "x-smartdev-acceptance" in request.headers and not (scoped and request.url.path.endswith("/conversation")):
         acceptance_scope = re.fullmatch(
             r"/projects/([a-f0-9-]{36})/(?:objectives|preview|development|dev-publishing)(?:/[^/]+){0,2}"
@@ -332,6 +333,7 @@ app.include_router(vault_router)
 app.include_router(coder_session_router)
 
 app.include_router(codex_access_router)
+app.include_router(architect_review_router)
 app.include_router(project_mcp_router)
 from external_mcp_grants import router as external_mcp_grants_router
 app.include_router(external_mcp_grants_router)

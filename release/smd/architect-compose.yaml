@@ -1,4 +1,8 @@
 services:
+  api:
+    environment:
+      SMARTDEV_ARCHITECT_URL: http://architect:8060
+    networks: [default, architecture]
   ollama:
     image: ${SMD_OLLAMA_IMAGE:?}
     restart: unless-stopped
@@ -22,6 +26,9 @@ services:
     image: ${SMD_API_IMAGE:?}
     restart: unless-stopped
     command: ["uvicorn", "architect:app", "--host", "0.0.0.0", "--port", "8060", "--app-dir", "/architect"]
+    environment:
+      SMARTDEV_ARCHITECT_OLLAMA_URL: http://ollama:11434/api/
+      SMARTDEV_ARCHITECT_MODEL: qwen2.5:1.5b
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8060/health', timeout=4)"]
       interval: 5s

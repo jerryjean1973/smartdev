@@ -22,6 +22,14 @@ loader.exec_module(wrapper)
 
 
 class FoundationTests(unittest.TestCase):
+    def setUp(self):
+        architect = patch.object(wrapper, "architect_review", return_value={
+            "review_id": str(UUID(int=99)), "classification": "ARCHITECTURE_PRESERVING",
+            "coherence_approved": True, "plan_sha256": "a" * 64, "constraints": ["preserve"],
+        })
+        self.architect = architect.start()
+        self.addCleanup(architect.stop)
+
     def test_session_signature_and_expiration(self):
         key = b"x" * 32
         session = issue_session(key, 100)
@@ -66,6 +74,7 @@ class FoundationTests(unittest.TestCase):
                 self.assertIn(args.task, prompt)
                 self.assertIn(args.reply_question, prompt)
                 self.assertIn("No task or task selection is required", prompt)
+                self.assertIn("slm_architect_review", prompt)
                 self.assertEqual(command, ["codex", "--sandbox", "workspace-write"])
                 self.assertNotIn("objective_id", lease)
                 sidebar.write_text("logo\nhello username")
@@ -86,6 +95,24 @@ class FoundationTests(unittest.TestCase):
         self.assertEqual([payload.get("action") for payload, suffix in calls if suffix=="/conversation"],["start_run","finish_run"])
         self.assertFalse(any(suffix=="/governance" for _,suffix in calls))
         self.assertTrue(any(payload.get("changed_files")==["Sidebar.tsx"] for payload,_ in calls))
+        self.architect.assert_called()
+
+    def test_main_fails_closed_before_model_auth_when_architect_is_unavailable(self):
+        args = Namespace(conversation=UUID(int=1), conversation_execution=UUID(int=2),
+                         terms="review", include_shared=False, task="Change navigation.",
+                         file=[], image=[], json=False)
+        self.architect.side_effect = RuntimeError("SLM Architect unavailable")
+        with (
+            TemporaryDirectory() as temporary,
+            patch.object(wrapper, "git", side_effect=["main", "a" * 40]),
+            patch.object(wrapper, "dirty_files", return_value={}),
+            patch.object(wrapper, "exchange", side_effect=[{"mode": "workspace-write"}, {"ok": True}]) as exchange,
+            patch.object(wrapper, "codex_preflight") as preflight,
+        ):
+            self.assertEqual(wrapper.run_conversation(args, Path(temporary)), 77)
+        preflight.assert_not_called()
+        self.assertEqual(exchange.call_args.args[0]["action"], "finish_run")
+        self.assertEqual(exchange.call_args.args[0]["exit_code"], 77)
 
     def test_main_runner_refuses_api_without_workspace_write_lease(self):
         args = Namespace(conversation=UUID(int=1), conversation_execution=UUID(int=2))
@@ -102,7 +129,8 @@ class FoundationTests(unittest.TestCase):
 
     def test_main_records_the_same_exit_code_when_model_auth_is_missing(self):
         args = Namespace(conversation=UUID(int=1), conversation_execution=UUID(int=2),
-                         terms="", include_shared=False)
+                         terms="", include_shared=False, task="Continue the current task.",
+                         file=[], image=[], json=False)
         with (
             patch.object(wrapper, "git", side_effect=["main", "a" * 40]),
             patch.object(wrapper, "dirty_files", return_value={}),
