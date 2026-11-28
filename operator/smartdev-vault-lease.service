@@ -1,7 +1,0 @@
-[Unit]
-Description=Renew the scoped Command Center secret service credential
-After=docker.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/docker run --rm --network container:smart-dev-ide-browser-api-1 --read-only --user 65532:65532 --cap-drop ALL --security-opt no-new-privileges -e OPENBAO_ADDR=http://vault:8200 -v /var/lib/dev-command-center/vault:/run/command-vault -v /var/lib/dev-command-center/vault-lease:/run/vault-enrollment:ro -v /root/dev-command-center/operator/vault_service_lease.py:/opt/renew.py:ro smartdev-api:managed-config-20261127 python /opt/renew.py
