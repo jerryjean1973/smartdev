@@ -43,6 +43,11 @@ class SmdArchitectTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("--model-store", result.stderr)
 
+    def test_smd_release_defaults_include_architect_taskboard(self):
+        builder = (SOURCE.parents[2] / "scripts" / "build-smd-release.py").read_text()
+        self.assertIn('"API": "smartdev-api:architect-taskboard-', builder)
+        self.assertIn('"PORTAL": "smartdev-portal:architect-column-', builder)
+
 
 if __name__ == "__main__":
     unittest.main()

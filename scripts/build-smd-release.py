@@ -14,8 +14,8 @@ from smd_export_policy import RELEASE_FILES, TEMPLATE, additions
 
 SOURCE = Path(__file__).resolve().parents[1] / "release" / "smd"
 IMAGES = {
-    "API": "smartdev-api:receipt-tasks-tools-v3",
-    "PORTAL": "smartdev-portal:receipt-tasks-v4",
+    "API": "smartdev-api:architect-taskboard-ce0df80",
+    "PORTAL": "smartdev-portal:architect-column-ce0df80",
     "POSTGRES": "pgvector/pgvector:pg17",
     "REDIS": "redis:7-alpine",
     "OPENBAO": "quay.io/openbao/openbao:2.7.3",
