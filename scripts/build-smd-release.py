@@ -22,7 +22,7 @@ IMAGES = {
     "CODER": "ghcr.io/coder/coder:v2.38.10",
     "CODER_DB": "postgres:17",
     "EDGE": "caddy:2.10.2-alpine",
-    "WORKSPACE": "command-dev-workspace:question-labels-4c3070a827b8",
+    "WORKSPACE": "command-dev-workspace:architect-gate-b5e3b00",
 }
 MODEL_MANIFEST = Path("manifests/registry.ollama.ai/library/qwen2.5/1.5b")
 CONTENT_ID = re.compile(r"sha256:[a-f0-9]{64}")
@@ -118,7 +118,8 @@ def main():
     parser.add_argument("output", type=Path)
     parser.add_argument("--images", type=Path, help="JSON object mapping each service key to an image")
     parser.add_argument("--offline", action="store_true", help="Embed locally available images")
-    parser.add_argument("--model-store", type=Path, help="Ollama model directory with qwen2.5:1.5b")
+    parser.add_argument("--model-store", type=Path, required=True,
+                        help="Required Ollama model directory with qwen2.5:1.5b for the Architect gate")
     parser.add_argument("--workspace-browser", type=Path, default=Path("/opt/smartdev-workspace-tools/chromium"),
                         help="Unpacked, architecture-matched Chromium and wget release runtime")
     parser.add_argument("--dns-zone",default="smd.youkandoit.com",help="Approved managed domain suffix")
@@ -126,8 +127,7 @@ def main():
     if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", args.revision):
         parser.error("Expected a simple release identifier")
     expected_images = dict(IMAGES)
-    if args.model_store:
-        expected_images["OLLAMA"] = "ollama/ollama:latest"
+    expected_images["OLLAMA"] = "ollama/ollama:latest"
     references = json.loads(args.images.read_text()) if args.images else expected_images
     if set(references) != set(expected_images):
         parser.error(f"Image keys must match {', '.join(expected_images)}")
@@ -145,10 +145,10 @@ def main():
                     raise ValueError("Linked release source")
                 if source.name == "architect-compose.yaml":
                     continue
-                if source.name == "compose.yaml" and args.model_store:
+                if source.name == "compose.yaml":
                     config = b"include: [architect-compose.yaml]\n" + source.read_bytes()
                     add_bytes(archive, source.name, config)
-                elif args.model_store or source.name != "architect.py":
+                else:
                     add_bytes(archive, source.name, source.read_bytes())
             for name,body in additions(args.dns_zone).items():
                 add_bytes(archive,name,body)
@@ -161,9 +161,8 @@ def main():
             profiles = SOURCE.parents[1] / "workspace" / "security"
             for name in ("seccomp.json", "LICENSE.moby-profiles", "command-codex-workspace"):
                 add_bytes(archive, f"coder-template/{name}", (profiles / name).read_bytes())
-            if args.model_store:
-                add_bytes(archive, "architect-compose.yaml", (SOURCE / "architect-compose.yaml").read_bytes())
-                add_model(archive, args.model_store)
+            add_bytes(archive, "architect-compose.yaml", (SOURCE / "architect-compose.yaml").read_bytes())
+            add_model(archive, args.model_store)
             add_bytes(archive, "images.env", "".join(
                 f"SMD_{key}_IMAGE={value}\n" for key, value in sorted(images.items())
             ).encode())

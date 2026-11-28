@@ -10,7 +10,7 @@ python3 scripts/build-smd-installer.py HTTPS_BUNDLE_URL BUNDLE_SHA256 REVISION /
 
 The release builder reports the bundle hash. The installer builder reports the bootstrap hash. Pin both to the reviewed revision in the environment's deployment offer. Publish the two artifacts using an approved release location. Allow enough destination disk space for Docker images, the archive, staged extraction, and new project data.
 
-The offline bundle includes API, portal, PostgreSQL, Redis, OpenBao, Coder, HTTPS ingress, and the optional local Architect classification service when the model store is specified. A registry-backed release accepts a JSON mapping of digest-pinned images using `--images`. Names must match the keys in `scripts/build-smd-release.py`.
+The offline bundle includes API, portal, PostgreSQL, Redis, OpenBao, Coder, HTTPS ingress, and the mandatory local Architect classification service. `--model-store` is required and must provide the pinned `qwen2.5:1.5b` model; release construction fails closed when it is absent. A registry-backed release accepts a JSON mapping of digest-pinned images using `--images`. Names must match the keys in `scripts/build-smd-release.py`.
 
 The installer assigns a stable project directory at `/opt/smartdev/PROJECT_UUID`. The project data directory holds the generated owner password, session material, and OpenBao recovery file. Use an authorized host session to retrieve the owner password. Keep project data and the Docker volumes under the owner's backup and recovery procedures. The OpenBao recovery file enables automatic unsealing of this single-host Vault and requires host-root protection.
 

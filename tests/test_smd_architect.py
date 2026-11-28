@@ -1,5 +1,7 @@
 import importlib.util
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -30,6 +32,16 @@ class SmdArchitectTests(unittest.TestCase):
                              {"kind": "read-only verification"})
         self.assertEqual(result["classification"], "ARCHITECTURE_PRESERVING")
         self.assertTrue(result["coherence_approved"])
+
+    def test_smd_release_cannot_omit_architect_model(self):
+        builder = SOURCE.parents[2] / "scripts" / "build-smd-release.py"
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(
+                [sys.executable, str(builder), "test-revision", str(Path(directory) / "release.tar")],
+                text=True, capture_output=True, timeout=10,
+            )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--model-store", result.stderr)
 
 
 if __name__ == "__main__":
