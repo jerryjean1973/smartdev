@@ -32,6 +32,7 @@ services:
       DATABASE_URL: postgresql://command:${SMD_DATABASE_PASSWORD:?}@postgres/command
       REDIS_URL: redis://redis:6379/0
       PGOPTIONS: "-c smartdev.install_kind=tenant"
+      SMARTDEV_INSTALL_KIND: tenant
       PORTAL_ORIGIN: ${SMD_PORTAL_ORIGIN:?}
       CODER_API_URL: http://coder:7080
       CODER_PUBLIC_URL: ${SMD_CODER_ORIGIN:?}

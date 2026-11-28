@@ -22,12 +22,6 @@ from coder_session import BRIDGE, revoke, router as coder_session_router
 from development import router as development_router
 from cc_codex import router as cc_codex_router
 from coder_inventory import router as coder_inventory_router
-from smd_deployment import router as smd_deployment_router
-from deployment_portal_access import PUBLIC_POST as PORTAL_PUBLIC_POST, router as deployment_portal_router
-from smd_receipts import router as smd_receipts_router
-from smd_git_tokens import router as smd_git_tokens_router
-from smd_release_assets import ASSET_ROUTE, router as smd_release_assets_router
-from smd_stack_export import router as smd_stack_export_router
 from conversations import router as conversations_router
 from runtime import router as runtime_router
 from project_mcp import router as project_mcp_router
@@ -38,6 +32,18 @@ from github import router as github_router
 from governance import router as governance_router
 from memory import router as memory_router
 from vault import router as vault_router
+
+COMMAND_CENTER_IMAGE = os.getenv("SMARTDEV_IMAGE_PROFILE", "command-center") != "tenant-smd"
+if COMMAND_CENTER_IMAGE:
+    from deployment_portal_access import PUBLIC_POST as PORTAL_PUBLIC_POST, router as deployment_portal_router
+    from smd_deployment import router as smd_deployment_router
+    from smd_git_tokens import router as smd_git_tokens_router
+    from smd_receipts import router as smd_receipts_router
+    from smd_release_assets import ASSET_ROUTE, router as smd_release_assets_router
+    from smd_stack_export import router as smd_stack_export_router
+else:
+    PORTAL_PUBLIC_POST = ()
+    ASSET_ROUTE = r"(?!)"
 
 @asynccontextmanager
 async def lifespan(app):
@@ -232,41 +238,6 @@ def projects():
     with database() as db:
         return db.execute("SELECT p.* FROM projects p WHERE NOT EXISTS (SELECT 1 FROM acceptance_fixture f WHERE f.project_id=p.id) ORDER BY p.created_at DESC").fetchall()
 
-class TenantAssignment(BaseModel, extra="forbid"):
-    tenant_name: str = Field(max_length=80)
-
-
-@app.get("/admin/project-tenants")
-def project_tenants():
-    with database() as db:
-        rows = db.execute("SELECT project_id, tenant_name FROM command_center_project_tenant").fetchall()
-    return {str(row["project_id"]): row["tenant_name"] for row in rows}
-
-
-@app.put("/admin/project-tenants/{project_id}")
-def assign_project_tenant(project_id: UUID, body: TenantAssignment):
-    name = body.tenant_name.strip()
-    with database() as db:
-        row = db.execute("""
-            SELECT id FROM projects WHERE id=%s AND NOT EXISTS (
-                SELECT 1 FROM acceptance_fixture WHERE project_id=projects.id
-            ) FOR UPDATE
-        """, (project_id,)).fetchone()
-        if row is None:
-            raise HTTPException(404, "Project not available.")
-        if name:
-            db.execute("""
-                INSERT INTO command_center_project_tenant (project_id, tenant_name)
-                VALUES (%s, %s) ON CONFLICT (project_id)
-                DO UPDATE SET tenant_name=EXCLUDED.tenant_name
-            """, (project_id, name))
-        else:
-            db.execute("DELETE FROM command_center_project_tenant WHERE project_id=%s", (project_id,))
-        db.execute("INSERT INTO audit (project_id, action) VALUES (%s, %s)",
-                   (project_id, "command-center:tenant-assignment"))
-    return {"tenant_name": name}
-
-
 @app.put("/projects/{project_id}", status_code=202)
 def create(project_id: UUID, body: Project):
     with database() as db:
@@ -305,14 +276,17 @@ def archive(project_id: UUID):
         db.execute("INSERT INTO audit (project_id,action) VALUES (%s,'archive')", (project_id,))
     return {"ok": True}
 
-from compute_console import router as compute_console_router
-from smd_environment_fixes import router as smd_environment_fixes_router
-from smd_owner_config import router as smd_owner_router
-from smd_tenant_access import router as smd_tenant_router
-app.include_router(smd_tenant_router)
-app.include_router(smd_owner_router)
-app.include_router(compute_console_router)
-app.include_router(smd_environment_fixes_router)
+if COMMAND_CENTER_IMAGE:
+    from command_center_tenants import router as command_center_tenants_router
+    from compute_console import router as compute_console_router
+    from smd_environment_fixes import router as smd_environment_fixes_router
+    from smd_owner_config import router as smd_owner_router
+    from smd_tenant_access import router as smd_tenant_router
+    app.include_router(command_center_tenants_router)
+    app.include_router(smd_tenant_router)
+    app.include_router(smd_owner_router)
+    app.include_router(compute_console_router)
+    app.include_router(smd_environment_fixes_router)
 app.include_router(memory_router)
 app.include_router(github_router)
 
@@ -321,12 +295,13 @@ app.include_router(governance_router)
 app.include_router(development_router)
 app.include_router(cc_codex_router)
 app.include_router(coder_inventory_router)
-app.include_router(smd_deployment_router)
-app.include_router(smd_receipts_router)
-app.include_router(deployment_portal_router)
-app.include_router(smd_git_tokens_router)
-app.include_router(smd_release_assets_router)
-app.include_router(smd_stack_export_router)
+if COMMAND_CENTER_IMAGE:
+    app.include_router(smd_deployment_router)
+    app.include_router(smd_receipts_router)
+    app.include_router(deployment_portal_router)
+    app.include_router(smd_git_tokens_router)
+    app.include_router(smd_release_assets_router)
+    app.include_router(smd_stack_export_router)
 
 app.include_router(vault_router)
 

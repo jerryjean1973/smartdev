@@ -14,8 +14,8 @@ from smd_export_policy import RELEASE_FILES, TEMPLATE, additions
 
 SOURCE = Path(__file__).resolve().parents[1] / "release" / "smd"
 IMAGES = {
-    "API": "smartdev-api:architect-taskboard-gitwrite-76d9328",
-    "PORTAL": "smartdev-portal:architect-column-ce0df80",
+    "API": "smartdev-api:tenant-smd",
+    "PORTAL": "smartdev-portal:tenant-smd",
     "POSTGRES": "pgvector/pgvector:pg17",
     "REDIS": "redis:7-alpine",
     "OPENBAO": "quay.io/openbao/openbao:2.7.3",
@@ -27,6 +27,19 @@ IMAGES = {
 MODEL_MANIFEST = Path("manifests/registry.ollama.ai/library/qwen2.5/1.5b")
 CONTENT_ID = re.compile(r"sha256:[a-f0-9]{64}")
 DIGEST_REFERENCE = re.compile(r"[^\s@=]+@sha256:[a-f0-9]{64}")
+TENANT_PROFILE = "tenant-smd"
+PROFILE_LABEL = "org.smartdev.image-profile"
+API_EXCLUDES = frozenset(
+    line.strip() for line in (SOURCE.parents[1] / "api" / "tenant-image-excludes.txt").read_text().splitlines()
+    if line.strip() and not line.lstrip().startswith("#")
+)
+PORTAL_FORBIDDEN = (
+    b"/api/admin/smd-deploy-tasks",
+    b"/api/admin/compute/deployments",
+    b"/api/admin/docker-export",
+    b"/development/smd",
+    b"/smd-export",
+)
 
 
 def add_bytes(archive, name, contents):
@@ -46,6 +59,63 @@ def local_image_ids(references):
     if not all(CONTENT_ID.fullmatch(identifier) for identifier in ids.values()):
         raise ValueError("Docker did not return pinned content IDs")
     return ids
+
+
+def audit_flattened_image(archive, service):
+    """Reject forbidden controller files or compiled deployment-console endpoints."""
+    def contains_forbidden(source):
+        overlap = max(map(len, PORTAL_FORBIDDEN)) - 1
+        tail = b""
+        while chunk := source.read(1024 * 1024):
+            window = tail + chunk
+            if any(marker in window for marker in PORTAL_FORBIDDEN):
+                return True
+            tail = window[-overlap:]
+        return False
+
+    forbidden_paths = []
+    forbidden_content = []
+    for member in archive:
+        name = member.name.lstrip("./")
+        if service == "API" and (name.startswith("app/") and Path(name).name in API_EXCLUDES):
+            forbidden_paths.append(name)
+        if service == "PORTAL" and member.isfile():
+            source = archive.extractfile(member)
+            if source and contains_forbidden(source):
+                forbidden_content.append(name)
+    if forbidden_paths:
+        raise ValueError("Tenant API image contains Command Center deployment files: " + ", ".join(forbidden_paths))
+    if forbidden_content:
+        raise ValueError("Tenant portal image contains Command Center deployment endpoints: " + ", ".join(forbidden_content))
+
+
+def verify_tenant_images(references):
+    selected = {key: references[key] for key in ("API", "PORTAL")}
+    try:
+        result = subprocess.run(
+            ["docker", "image", "inspect", *selected.values()],
+            check=True, capture_output=True,
+        )
+    except subprocess.CalledProcessError as failure:
+        raise ValueError("Tenant API and portal images must be locally available for content inspection") from failure
+    images = json.loads(result.stdout)
+    for (service, reference), image in zip(selected.items(), images, strict=True):
+        labels = (image.get("Config") or {}).get("Labels") or {}
+        if labels.get(PROFILE_LABEL) != TENANT_PROFILE:
+            raise ValueError(f"{service} image is not labeled as a tenant-smd image: {reference}")
+        container = subprocess.run(
+            ["docker", "create", reference], check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        if not re.fullmatch(r"[a-f0-9]{12,64}", container):
+            raise ValueError("Docker did not return a container ID for image inspection")
+        try:
+            with subprocess.Popen(["docker", "export", container], stdout=subprocess.PIPE) as exported:
+                with tarfile.open(fileobj=exported.stdout, mode="r|") as flattened:
+                    audit_flattened_image(flattened, service)
+                if exported.wait():
+                    raise RuntimeError(f"Could not inspect flattened {service} image")
+        finally:
+            subprocess.run(["docker", "rm", container], check=True, capture_output=True)
 
 
 def add_docker_archive(archive, references):
@@ -133,6 +203,7 @@ def main():
         parser.error(f"Image keys must match {', '.join(expected_images)}")
     if not args.offline and not all(DIGEST_REFERENCE.fullmatch(value) for value in references.values()):
         parser.error("A registry release requires digest-pinned image references")
+    verify_tenant_images(references)
     with tempfile.TemporaryDirectory(dir=args.output.resolve().parent) as workspace:
         temporary = Path(workspace)
         output = temporary / "release.tar"
