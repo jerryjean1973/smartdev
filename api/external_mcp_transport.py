@@ -8,6 +8,7 @@ from starlette.concurrency import run_in_threadpool
 from external_mcp_grants import require_grant
 from external_mcp_tasks import ScopedTasks, WorkspaceUnavailable
 from governance import task_navigation
+from smd_environment_fixes import EnvironmentBindingUnavailable
 
 router = APIRouter()
 VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26")
@@ -125,7 +126,7 @@ def dispatch(message, reads):
             result = {"content": [{"type": "text", "text": json.dumps(data)}]}
             if isinstance(data, dict):
                 result["structuredContent"] = data
-        except WorkspaceUnavailable as failure:
+        except (WorkspaceUnavailable, EnvironmentBindingUnavailable) as failure:
             result = {"content": [{"type": "text", "text": str(failure)}], "isError": True}
         except LookupError:
             result = {"content": [{"type": "text", "text": "Resource not available."}], "isError": True}

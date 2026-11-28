@@ -15,6 +15,10 @@ from work_messages import visible_text
 router = APIRouter()
 
 
+class EnvironmentBindingUnavailable(LookupError):
+    """A caller-visible target binding or permission is missing."""
+
+
 def registered_environment(row):
     hostname = (row.get("deployment_hostname") or "").lower()
     zone = (row.get("dns_zone") or "").lower()
@@ -49,6 +53,16 @@ ENVIRONMENTS = """
  WHERE a.tenant_id=%s AND t.status='deployed' AND t.reconciled_at IS NULL
    AND r.verified_at IS NOT NULL
  ORDER BY t.queued_at,t.id
+"""
+
+TARGET_ENVIRONMENT = """
+ SELECT t.id AS deployment_id,t.project_id AS deployment_project_id,t.deployment_hostname,
+        t.dns_zone,t.instance_id,t.project_manifest,t.status,t.reconciled_at,
+        a.tenant_id,a.version AS assignment_version,r.connections,r.verified_at
+ FROM smd_deploy_task t
+ LEFT JOIN smd_deployment_assignment a ON a.task_id=t.id
+ LEFT JOIN smd_deploy_receipt r ON r.task_id=t.id AND r.instance_id=t.instance_id
+ WHERE t.id=%s
 """
 
 
@@ -88,7 +102,9 @@ def request_fix(grant, deployment_id, project_id, environment, instructions,
     client_request = UUID(str(client_request_id))
     environment = str(environment).upper()
     if project not in {UUID(str(value)) for value in grant["project_ids"]}:
-        raise LookupError("Project not available in the current tenant scope.")
+        raise EnvironmentBindingUnavailable(
+            "Missing MCP project permission: project_id is not present in the current grant."
+        )
     if not isinstance(instructions, str) or not instructions.strip() or len(instructions) > 27000:
         raise ValueError("Invalid instructions")
     label = (title or f"{environment} environment fix").strip()
@@ -101,11 +117,32 @@ def request_fix(grant, deployment_id, project_id, environment, instructions,
     request_id = uuid5(UUID(str(grant["owner_id"])), "smartdev-environment-fix:" + str(client_request))
     with database() as db:
         tenant = tenant_scope(db, grant)
-        row = db.execute(ENVIRONMENTS.replace(" ORDER BY t.queued_at,t.id", " AND t.id=%s"),
-                         (tenant, deployment)).fetchone()
-        if (not row or not included_project(row, project)
-                or registered_environment(row) != environment):
-            raise LookupError("Deployment environment not available in the current tenant scope.")
+        row = db.execute(TARGET_ENVIRONMENT, (deployment,)).fetchone()
+        if not row:
+            raise EnvironmentBindingUnavailable(
+                "Missing deployment binding: deployment_id does not identify a deployed environment."
+            )
+        if row["status"] != "deployed" or row["reconciled_at"] is not None:
+            raise EnvironmentBindingUnavailable(
+                "Missing active deployment permission: the target is not an active deployment."
+            )
+        if row["tenant_id"] != tenant:
+            raise EnvironmentBindingUnavailable(
+                "Missing tenant binding: the deployment is not assigned to the current tenant."
+            )
+        if row["verified_at"] is None:
+            raise EnvironmentBindingUnavailable(
+                "Missing receipt binding: the deployment instance has no verified enrollment receipt."
+            )
+        if not included_project(row, project):
+            raise EnvironmentBindingUnavailable(
+                "Missing deployment project binding: project_id is not deployed in this environment."
+            )
+        registered = registered_environment(row)
+        if registered != environment:
+            raise EnvironmentBindingUnavailable(
+                f"Environment selection mismatch: deployment_id is registered as {registered}, not {environment}."
+            )
         saved = db.execute("""
             SELECT id,payload_digest,status,receipt,failure_reason FROM smd_environment_fix_request
             WHERE grant_id=%s AND client_request_id=%s FOR UPDATE

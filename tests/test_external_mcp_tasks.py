@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "api"))
 from fastapi import HTTPException
 from external_mcp_tasks import ScopedTasks
 from external_mcp_transport import TOOLS, dispatch, handle
+from smd_environment_fixes import EnvironmentBindingUnavailable
 
 
 class ExternalTaskTests(unittest.TestCase):
@@ -119,3 +120,16 @@ class ExternalTaskTests(unittest.TestCase):
                          ["DEV", "QA", "DEPLOYED"])
         self.assertIn("deployment_id", tool["inputSchema"]["required"])
         self.assertIn("project_id", tool["inputSchema"]["required"])
+
+    def test_environment_fix_returns_the_exact_missing_binding(self):
+        message = "Missing tenant binding: the deployment is not assigned to the current tenant."
+        self.client.request_environment_fix = Mock(side_effect=EnvironmentBindingUnavailable(message))
+        frame = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+            "name": "smartdev_request_environment_fix", "arguments": {
+                "deployment_id": self.task, "project_id": self.project,
+                "environment": "QA", "instructions": "Inspect only.",
+                "client_request_id": self.request,
+            }}}
+        result = dispatch(frame, self.client)["result"]
+        self.assertTrue(result["isError"])
+        self.assertEqual(result["content"][0]["text"], message)

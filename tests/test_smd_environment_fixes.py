@@ -55,7 +55,7 @@ class EnvironmentFixTests(unittest.TestCase):
         self.assertEqual(insert_args[3:7], (self.tenant, self.deployment, self.project, "QA"))
 
     def test_cross_project_and_wrong_environment_fail_before_queue_write(self):
-        with self.assertRaises(LookupError):
+        with self.assertRaisesRegex(fixes.EnvironmentBindingUnavailable, "MCP project permission"):
             fixes.request_fix(self.grant, self.deployment, UUID(int=20), "QA",
                               "Repair navigation.", self.client_request)
         db = Mock()
@@ -68,7 +68,8 @@ class EnvironmentFixTests(unittest.TestCase):
         context.__enter__ = Mock(return_value=db)
         context.__exit__ = Mock(return_value=False)
         with patch.object(fixes, "database", return_value=context):
-            with self.assertRaises(LookupError):
+            with self.assertRaisesRegex(fixes.EnvironmentBindingUnavailable,
+                                        "registered as QA, not DEV"):
                 fixes.request_fix(self.grant, self.deployment, self.project, "DEV",
                                   "Repair navigation.", self.client_request)
         self.assertEqual(db.execute.call_count, 2)
