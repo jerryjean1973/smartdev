@@ -76,6 +76,9 @@ SOURCE = """
  LEFT JOIN taskboard_item num ON (num.project_id,num.item_id)=(r.project_id,r.board_item)
  LEFT JOIN LATERAL (SELECT revision,summary,evidence,verified_at FROM taskboard_repair proof
    WHERE (proof.project_id,proof.request_id)=(r.project_id,r.request_id) ORDER BY verified_at DESC LIMIT 1) repair ON true
+ LEFT JOIN LATERAL (SELECT id,execution_id,model,classification,coherence_approved,reviewed_at
+   FROM architect_task_review review WHERE (review.project_id,review.objective_id)=(r.project_id,r.task_id)
+   ORDER BY reviewed_at DESC,id DESC LIMIT 1) architect ON true
  WHERE NOT p.archived AND NOT EXISTS (SELECT 1 FROM acceptance_fixture f WHERE f.project_id=p.id)
  AND NOT EXISTS (SELECT 1 FROM objective_presentation hidden WHERE r.kind='create' AND hidden.objective_id=c.id
                  AND hidden.excluded_from_board AND hidden.reason='Removed from Taskboard by the owner.')
@@ -89,6 +92,10 @@ COLUMNS = """r.request_id,r.project_id,p.name AS project_name,r.task_id,r.task_i
       WHEN COALESCE(covered.execution_phase,r.execution_phase) IS NOT NULL THEN COALESCE(covered.execution_phase,r.execution_phase)
       WHEN COALESCE(covered.delivery,r.delivery)='accepted' OR COALESCE(covered.dispatch_hold,r.dispatch_hold) IS NOT NULL THEN 'Queued' ELSE 'Pending' END AS work_status,
  r.execution_code,r.waiting_for_input,r.execution_updated_at,
+ true AS architect_review_required,(architect.id IS NOT NULL) AS architect_reviewed,
+ architect.id AS architect_review_id,architect.execution_id AS architect_execution_id,
+ architect.model AS architect_model,architect.classification AS architect_classification,
+ architect.coherence_approved AS architect_approved,architect.reviewed_at AS architect_reviewed_at,
  CASE WHEN bo.id IS NOT NULL THEN 'objective' WHEN assignment.value='global' THEN 'global' ELSE 'unassigned' END AS scope_kind,
  c.business_objective AS origin_business_objective,c.display_name AS task_title,
  COALESCE(num.description,NULLIF(r.title,''),NULLIF(left(regexp_replace(r.instruction,'[[:space:]]+',' ','g'),175),''),'Description not retained') AS label"""

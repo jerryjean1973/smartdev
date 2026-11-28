@@ -40,6 +40,7 @@ def assertions():
     assert {r['request_id'] for r in entries}=={first,second}
     assert len({r['task_number'] for r in entries})==1 and entries[0]['task_number'].startswith('CC-')
     assert entries[0]['actor'] is None
+    assert all(item['architect_review_required'] and not item['architect_reviewed'] for item in entries)
     assert board_requests(other)==[] and lookup(hidden,[other])['destination']=='Workspace'
     assert [r['request_id'] for r in workspace_requests(other)]==[hidden]
     for pid,ref in [(other,hidden),(central,hidden),(central,legacy)]:

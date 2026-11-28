@@ -5,6 +5,7 @@ import {TaskTable,type TaskLine} from './task-table';
 
 export type McpRequest = {
   task_number?:string; tenant_name?:string; connector?:string; actor?:string; destination?:string; message_id?:string; failure_reason?:string; repair?:{summary:string; verified_at:string; evidence:string[]}|null; admission?:string|null; matched_request?:string|null; request_id:string; project_id:string; project_name:string; task_id:string|null; task_title:string|null;
+  architect_review_required:boolean; architect_reviewed:boolean; architect_review_id?:string|null; architect_execution_id?:string|null; architect_model?:string|null; architect_classification?:string|null; architect_approved?:boolean|null; architect_reviewed_at?:string|null;
   work_status:'Pending'|'Queued'|'Processing'|'Processed'|'Done'; execution_code:number|null; waiting_for_input:boolean; execution_updated_at:string|null; scope_kind:'objective'|'global'|'unassigned'; business_objective:string|null; receipt:string|null; kind:string; delivery:string; received_at:string|null; label:string;
 };
 const zone = 'America/Toronto';
@@ -58,6 +59,8 @@ export function RequestDetails({item,expanded=false,card=false}:{item:McpRequest
       <p>Request ID <code>{item.request_id}</code></p>
       <p>Message ID <code>{item.message_id || 'Not retained'}</code></p>
       <p>Execution receipt <code>{item.receipt || 'Not retained'}</code></p>
+      <p>Architect review {item.architect_review_required ? 'On' : 'Off'}
+        {item.architect_reviewed && <> · {item.architect_classification} · receipt <code>{item.architect_review_id}</code></>}</p>
       <p>Source {item.connector || 'Not retained'} · Actor {item.actor || 'Not retained'} · Destination {item.destination || 'Not retained'}</p>
       {item.failure_reason && <p>{item.failure_reason}</p>}
       {item.repair && <div><p>{item.repair.summary}</p>{item.repair.evidence.map(url=><a key={url} href={url} target="_blank" rel="noreferrer">Open {url.split('/').pop()} </a>)}</div>}
@@ -71,6 +74,7 @@ export function receiptLine(item:McpRequest):TaskLine {
   return {key:item.request_id,number:item.task_number,description:item.label,objective:item.business_objective,project:item.project_name,
     tenant:item.tenant_name,source:item.connector || 'Not retained',execution:failed?'Failed · '+item.execution_code:item.work_status,
     verification:item.repair?'Repair verified':item.work_status==='Done'?'Owner completed':'Unverified',
+    architectReview:item.architect_review_required?'On':'Off',
     created:item.received_at,updated:item.repair?.verified_at || item.execution_updated_at || item.received_at,
     evidence:item.repair?item.repair.evidence.length+' files':item.receipt?'Run receipt':'—',active:item.work_status==='Processing',
     details:()=><RequestDetails item={item} expanded card/>};

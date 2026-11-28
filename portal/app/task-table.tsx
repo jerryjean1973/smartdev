@@ -4,12 +4,13 @@ import {Fragment,useState,type ReactNode} from 'react';
 
 export type TaskLine = {
   key:string; number?:string|null; description:string; objective?:string|null; project:string;
-  tenant?:string|null; source:string; execution:string; verification:string; created?:string|null;
+  tenant?:string|null; source:string; execution:string; architectReview:'On'|'Off'; verification:string; created?:string|null;
   updated?:string|null; evidence:string; active?:boolean; details:()=>ReactNode; actions?:ReactNode;
 };
 const columns = [
   ['number','Task number'],['description','Description'],['objective','BO'],['project','Project'],
-  ['tenant','Tenant'],['source','Source'],['execution','Execution'],['verification','Verification'],
+  ['tenant','Tenant'],['source','Source'],['execution','Execution'],['architectReview','Architect review'],
+  ['verification','Verification'],
   ['created','Created'],['updated','Updated'],['evidence','Evidence'],
 ] as const;
 type Column = typeof columns[number][0];

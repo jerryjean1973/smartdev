@@ -19,6 +19,8 @@ type Objective = {
   created_at: string;
   version: number;
   status: string;
+  architectReview: {required:boolean; reviewed:boolean; review_id:string|null; execution_id:string|null;
+    model:string|null; classification:string|null; approved:boolean|null; reviewed_at:string|null};
   criteria: {id: string; description: string}[];
   progress: {
     milestones?: {position: number; title: string; detail: string;
@@ -291,7 +293,12 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
     }
     const task:Objective={id:request.request_id,display_name:request.label,expected_outcome:request.label,
       original_request:request.label,business_objective:request.business_objective,created_at:request.received_at || '',
-      status:request.work_status,version:0,criteria:[],progress:{completedCriteria:[],blockedCriteria:[],blockers:[],nextAction:null,active:[],attempts:[]}};
+      status:request.work_status,version:0,criteria:[],architectReview:{required:request.architect_review_required,
+        reviewed:request.architect_reviewed,review_id:request.architect_review_id || null,
+        execution_id:request.architect_execution_id || null,model:request.architect_model || null,
+        classification:request.architect_classification || null,approved:request.architect_approved ?? null,
+        reviewed_at:request.architect_reviewed_at || null},
+      progress:{completedCriteria:[],blockedCriteria:[],blockers:[],nextAction:null,active:[],attempts:[]}};
     requestRows.push({project,task,request,title:original?.label || request.label,status:request.work_status,running:request.work_status==='Processing'});
   }
   const projectRows=[...objectiveRows.filter(row=>!replaced.has(row.task.id)),...requestRows]
@@ -542,6 +549,10 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
       {openTask === task.id && <section id={detailsId} className="wb-taskboard-detail" aria-label="Task details">
         <h3>Task details</h3>
         <p>Task ID <code>{task.id}</code></p>
+        <h4>Architect review</h4>
+        <p>{task.architectReview.required ? 'On' : 'Off'} · {task.architectReview.reviewed ? <>
+          {task.architectReview.classification} · receipt <code>{task.architectReview.review_id}</code>
+        </> : 'Pending until execution'}</p>
         <h4>Expected outcome</h4>
         <p>{task.expected_outcome}</p>
         {task.original_request !== task.expected_outcome && <details>
@@ -599,9 +610,9 @@ export default function Taskboard({projects, navigation, sidebarTasks, parents, 
     const run=latestRun(task);
     const underlying=request?.task_id || task.id;
     const evidence=task.progress.verifiedScreenshots?.length || 0;
-    const line:TaskLine=request?receiptLine(request):{
+    const line:TaskLine=request?{...receiptLine(request),architectReview:task.architectReview.required?'On':'Off'}:{
       key:task.id,number:task.task_number,description:row.title,objective:businessId(row),project:project.name,tenant:task.tenant_name,
-      source:'Command Center',execution:row.status,verification:evidence?'Evidence recorded':'Unverified',created:task.created_at,
+      source:'Command Center',execution:row.status,architectReview:task.architectReview.required?'On':'Off',verification:evidence?'Evidence recorded':'Unverified',created:task.created_at,
       updated:task.updated_at || run?.finished_at || run?.started_at || task.created_at,evidence:evidence?evidence+' screenshots':'—',
       active:row.running,details:()=>null};
     return {...line, details:()=><div>{request && <RequestDetails item={request} expanded card/>}<ul className="wb-taskboard-list">{renderTask(row)}</ul></div>,

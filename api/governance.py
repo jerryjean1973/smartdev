@@ -238,6 +238,22 @@ def progress(db, row, candidate=None):
     }
 
 
+def task_architect_review(db, project_id, objective_id):
+    review = db.execute("""SELECT id,execution_id,model,classification,coherence_approved,reviewed_at
+        FROM architect_task_review WHERE project_id=%s AND objective_id=%s
+        ORDER BY reviewed_at DESC,id DESC LIMIT 1""", (project_id, objective_id)).fetchone()
+    return {
+        "required": True,
+        "reviewed": bool(review),
+        "review_id": review["id"] if review else None,
+        "execution_id": review["execution_id"] if review else None,
+        "model": review["model"] if review else None,
+        "classification": review["classification"] if review else None,
+        "approved": review["coherence_approved"] if review else None,
+        "reviewed_at": review["reviewed_at"] if review else None,
+    }
+
+
 @router.get("/projects/{project_id}/objectives")
 def list_objectives(project_id: UUID, source: Literal["mcp"] | None = None, board: bool = False):
     with database() as db:
@@ -272,7 +288,9 @@ def list_objectives(project_id: UUID, source: Literal["mcp"] | None = None, boar
                 FROM objective_milestone
                 WHERE objective_id=%s ORDER BY position
             """, (row["id"],)).fetchall()
-            results.append({**row, "criteria":[item for item in row["criteria"] if item["id"]!="implementation"], "status": state["status"], "progress": state})
+            results.append({**row, "criteria":[item for item in row["criteria"] if item["id"]!="implementation"],
+                            "status": state["status"], "progress": state,
+                            "architectReview": task_architect_review(db, project_id, row["id"])})
         return results
 
 
