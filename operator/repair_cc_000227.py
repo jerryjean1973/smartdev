@@ -110,7 +110,8 @@ def main(revision):
 
         changed = db.execute(
             """SELECT r.task_id,r.kind,r.admission,r.board_item,r.message_id,r.execution_ref,r.dispatch_hold,
-                      o.attempts,o.next_attempt,taskboard_number(t.number) AS task_number
+                      o.attempts,o.next_attempt='infinity'::timestamptz AS dispatch_paused,
+                      taskboard_number(t.number) AS task_number
                FROM mcp_task_request r JOIN mcp_task_outbox o USING(project_id,request_id)
                JOIN taskboard_item t ON (t.project_id,t.item_id)=(r.project_id,r.board_item)
                WHERE r.project_id=%s AND r.request_id=%s""",
@@ -118,7 +119,7 @@ def main(revision):
         ).fetchone()
         require(changed["task_id"] == NEW_TASK and changed["kind"] == "create" and changed["admission"] == "created", "New mapping failed")
         require(changed["board_item"] == REQUEST and changed["task_number"] == "CC-000227", "Board identity changed")
-        require(changed["attempts"] == 0 and str(changed["next_attempt"]) == "infinity", "Dispatch is not paused")
+        require(changed["attempts"] == 0 and changed["dispatch_paused"], "Dispatch is not paused")
         require(changed["message_id"] is None and changed["execution_ref"] is None, "Execution identity appeared during repair")
         require(
             db.execute("SELECT xmin::text AS row_version FROM objective_contract WHERE project_id=%s AND id=%s", (PROJECT, OLD_TASK)).fetchone()["row_version"]
