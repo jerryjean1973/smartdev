@@ -38,6 +38,13 @@ def main():
     reconcile.add_argument("--confirm-prior-runner-stopped", action="store_true", required=True)
     reconcile.add_argument("--confirm-untagged-inventory-reviewed", action="store_true", required=True)
     reconcile.add_argument("--evidence-reference", required=True)
+    actions.add_parser("fix-claim")
+    fix_result = actions.add_parser("fix-result")
+    fix_result.add_argument("request_id", type=UUID)
+    fix_result.add_argument("claim_id", type=UUID)
+    fix_result.add_argument("status", choices=("delivered", "denied", "unconfirmed"))
+    fix_result.add_argument("--receipt-file", type=Path)
+    fix_result.add_argument("--failure-reason")
     args = parser.parse_args()
     origin = args.origin.rstrip("/")
     parsed = urlsplit(origin)
@@ -81,6 +88,15 @@ def main():
             payload = {"prior_runner_stopped": args.confirm_prior_runner_stopped,
                        "untagged_inventory_reviewed": args.confirm_untagged_inventory_reviewed,
                        "evidence_reference": args.evidence_reference}
+        elif args.action == "fix-claim":
+            path = "/admin/smd-environment-fixes/claim"
+            payload = {}
+        elif args.action == "fix-result":
+            path = "/admin/smd-environment-fixes/result"
+            receipt = json.loads(args.receipt_file.read_text()) if args.receipt_file else None
+            payload = {"request_id": str(args.request_id), "claim_id": str(args.claim_id),
+                       "status": args.status, "receipt": receipt,
+                       "failure_reason": args.failure_reason}
         with request(path, payload, cookie, timeout=60 if args.action == "reconcile-legacy" else 15) as response:
             print(json.dumps(json.load(response), indent=2))
     except HTTPError as error:

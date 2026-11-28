@@ -30,13 +30,17 @@ TEXT_FIELD = {"type": "string", "minLength": 1, "maxLength": 30000}
 SCOPE_FIELD = {"type": "string", "description": "Work scope for this request: global for platform-wide work, an existing BO ID, or unassigned."}
 MESSAGE_FIELDS = {"task_id": UUID_FIELD, "message": TEXT_FIELD, "client_request_id": UUID_FIELD}
 RELEASE_TOOL = "smartdev_dev_release"
-WRITE_TOOLS = {"smartdev_create_task", "smartdev_send_message", "smartdev_reply_to_waiting_task", RELEASE_TOOL}
+WRITE_TOOLS = {"smartdev_create_task", "smartdev_send_message", "smartdev_reply_to_waiting_task",
+               "smartdev_request_environment_fix", RELEASE_TOOL}
 
 TOOLS = [
     tool("smartdev_get_receipt", "Look up an MCP task write by its public execution receipt or Taskboard request ID.",
          {"receipt": {"type":"string"}}, ("receipt",)),
     tool("smartdev_inspect_dev_portal", "Inspect the enrolled SmartDev DEV portal via the Ubuntu operator",
          {"project_id": UUID_FIELD}, ("project_id",)),
+    tool("smartdev_list_environments", "List active verified deployment environments in the caller's current tenant and project scope.", {}),
+    tool("smartdev_get_environment_fix", "Read delivery status and the remote executor receipt for a tenant-scoped environment fix request.",
+         {"request_id": UUID_FIELD}, ("request_id",)),
     tool("smartdev_list_projects", "List authorized SmartDev projects", {}),
     tool("smartdev_list_tasks", "List tasks in an authorized SmartDev project",
          {"project_id": {"type": "string", "format": "uuid"}, "status": {"type": "string"}},
@@ -52,6 +56,13 @@ TOOLS = [
          {**MESSAGE_FIELDS, "scope": SCOPE_FIELD}, tuple(MESSAGE_FIELDS), write=True),
     tool("smartdev_reply_to_waiting_task", "Resume a task stopped awaiting a user reply. Reuse the same client request UUID on retry.",
          {**MESSAGE_FIELDS, "scope": SCOPE_FIELD}, tuple(MESSAGE_FIELDS), write=True),
+    tool("smartdev_request_environment_fix", "Request a fix in one explicitly selected deployed environment. The target must be active, verified, assigned to the caller's current tenant, and contain the authorized project. Delivery uses the enrolled operator; SSH credentials are never returned.",
+         {"deployment_id": UUID_FIELD, "project_id": UUID_FIELD,
+          "environment": {"type":"string","enum":["DEV","QA","DEPLOYED"]},
+          "title": {"type":"string","minLength":1,"maxLength":100},
+          "instructions": {"type":"string","minLength":1,"maxLength":27000},
+          "client_request_id": UUID_FIELD},
+         ("deployment_id","project_id","environment","instructions","client_request_id"), write=True),
 ]
 
 
@@ -92,6 +103,8 @@ def dispatch(message, reads):
     elif method == "tools/call":
         handlers = {
             "smartdev_inspect_dev_portal": lambda **args: reads.inspect_dev_portal(**args),
+            "smartdev_list_environments": reads.list_environments,
+            "smartdev_get_environment_fix": reads.get_environment_fix,
             "smartdev_list_projects": reads.list_projects,
             "smartdev_list_tasks": reads.list_tasks,
             "smartdev_get_task": reads.get_task,
@@ -100,6 +113,7 @@ def dispatch(message, reads):
             "smartdev_create_task": reads.create_task,
             "smartdev_send_message": reads.send_message,
             "smartdev_reply_to_waiting_task": reads.reply_to_waiting_task,
+            "smartdev_request_environment_fix": reads.request_environment_fix,
             RELEASE_TOOL: reads.release_dev,
         }
         name = params.get("name")

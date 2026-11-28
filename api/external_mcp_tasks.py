@@ -89,6 +89,24 @@ class ScopedTasks(ScopedTaskReads):
         project = self._require_project(project_id)
         return inspect_portal(project, self.grant_id)
 
+    def list_environments(self):
+        from smd_environment_fixes import list_environments
+        return list_environments({"id": self.grant_id, "owner_id": self.owner_id,
+                                  "project_ids": list(self.project_ids)})
+
+    def request_environment_fix(self, deployment_id, project_id, environment, instructions,
+                                client_request_id, title=None):
+        from smd_environment_fixes import request_fix
+        return request_fix({"id": self.grant_id, "owner_id": self.owner_id,
+                            "project_ids": list(self.project_ids)},
+                           deployment_id, project_id, environment, instructions,
+                           client_request_id, title)
+
+    def get_environment_fix(self, request_id):
+        from smd_environment_fixes import get_fix
+        return get_fix({"id": self.grant_id, "owner_id": self.owner_id,
+                        "project_ids": list(self.project_ids)}, request_id)
+
     @staticmethod
     def _receipt(run):
         code = run["exit_code"]

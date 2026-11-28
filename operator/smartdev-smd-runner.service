@@ -8,6 +8,7 @@ Type=oneshot
 WorkingDirectory=/root/dev-command-center
 ExecStart=/usr/bin/python3 /root/dev-command-center/scripts/smd-task-runner.py
 Environment=SMARTDEV_OWNER_PASSWORD_FILE=/root/.smart-dev-validation.UN6j8q/portal-password
+Environment=SMARTDEV_SMD_ENVIRONMENT_FIXES=1
 EnvironmentFile=-/etc/smartdev/smd-runner.env
 StateDirectory=smartdev-smd-runner
 StateDirectoryMode=0700

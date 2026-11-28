@@ -215,6 +215,34 @@ class RunnerTest(unittest.TestCase):
         self.assertNotIn(b"OPENSSH PRIVATE KEY", script)
         subprocess.run(["bash", "-n"], input=script, check=True)
 
+    def test_environment_fix_uses_registered_identity_and_never_puts_prompt_in_ssh_command(self):
+        identity = self.root / "recovery" / TASK
+        identity.parent.mkdir()
+        identity.write_text("private material")
+        identity.chmod(0o600)
+        identity.with_name(identity.name + ".known_hosts").write_text("host key")
+        request_id = "a6cd06fa-e5f0-43cb-9d42-2eb23392f304"
+        claim_id = "b65ed617-3792-44eb-aabf-96374c4550ec"
+        prompt = "Repair the QA navigation without changing another tenant."
+        claim = {
+            "request_id": request_id, "claim_id": claim_id,
+            "deployment_id": TASK, "deployment_project_id": PROJECT,
+            "project_id": PROJECT, "instance_id": INSTANCE, "ipv4": IPV4,
+            "environment": "QA", "title": "Repair QA navigation", "instruction": prompt,
+        }
+
+        def execute(command, **kwargs):
+            self.assertNotIn(prompt, " ".join(command))
+            self.assertEqual(json.loads(kwargs["input"])["instruction"], prompt)
+            self.assertIn("UserKnownHostsFile=" + str(identity) + ".known_hosts", command)
+            return Mock(stdout=json.dumps({"request_id": request_id, "task_id": TASK,
+                                           "execution_id": "remote-receipt"}))
+
+        receipt = runner.submit_environment_fix(self.root, claim, run=execute)
+        self.assertEqual(receipt["executor"], "enrolled-smd-runner")
+        self.assertEqual(receipt["instance_id"], INSTANCE)
+        self.assertEqual(receipt["remote"]["execution_id"], "remote-receipt")
+
     def test_cloud_init_signs_verified_installer_output_and_retries_enrollment(self):
         key = runner.generate_receipt_key()
         installer = self.root / "installer"

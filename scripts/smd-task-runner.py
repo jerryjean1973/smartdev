@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 from secrets import token_urlsafe
+import shlex
+import stat
 import subprocess
 import socket
 import sys
@@ -30,6 +32,50 @@ RECOVERABLE = (OSError, subprocess.SubprocessError, ValueError, KeyError)
 MAX_INSTALLER_BYTES = 1024 * 1024
 RECEIPT_TIMEOUT = 3600
 PROVIDER_IP_TIMEOUT = 600
+
+REMOTE_INNER_SUBMIT = r'''import json,os,sys
+from uuid import UUID
+from external_mcp_tasks import ScopedTasks
+from governance import task_navigation
+from main import projects
+from store import database
+
+payload=json.load(sys.stdin)
+deployment=str(UUID(payload["deployment_id"]))
+project=UUID(payload["project_id"])
+if os.getenv("SMD_PORTAL_TASK") != deployment:
+    raise SystemExit("Deployment identity mismatch")
+with database() as db:
+    owner=db.execute("SELECT id FROM smartdev_owner WHERE singleton").fetchone()["id"]
+client=ScopedTasks({"project_ids":[project],"owner_id":owner},
+                   projects=projects,task_navigation=task_navigation)
+prompt=("Tenant-scoped environment fix request. Target deployment: "+deployment+
+        ". Explicit environment: "+payload["environment"]+
+        ". Work only in this deployment and project. Do not route to another workspace. "
+        "Return the actual executor and durable receipt.\n\n"+payload["instruction"])
+result=client.create_task(project,prompt,payload["request_id"],title=payload["title"],
+                          scope="unassigned",work_key="environment-fix:"+deployment+":"+payload["environment"])
+print(json.dumps(result,separators=(",",":")))
+'''
+
+REMOTE_LAUNCHER = r'''import json,subprocess,sys,urllib.request
+payload=json.load(sys.stdin)
+observed=urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
+    "http://169.254.169.254/v1/instance-v2-id",timeout=4).read().decode().strip()
+if observed != payload["instance_id"]:
+    raise SystemExit("Instance identity mismatch")
+compose="smd-"+payload["deployment_project_id"]
+ids=subprocess.check_output(["docker","ps","-q","--filter","label=com.docker.compose.project="+compose,
+                             "--filter","label=com.docker.compose.service=api"],text=True).split()
+if len(ids)!=1:
+    raise SystemExit("Registered deployment API unavailable")
+result=subprocess.run(["docker","exec","-i",ids[0],"python","-c",''' + repr(REMOTE_INNER_SUBMIT) + r'''],
+                      input=json.dumps(payload),text=True,capture_output=True,timeout=45)
+if result.returncode or not result.stdout.strip():
+    raise SystemExit("Remote task intake unavailable")
+reply=json.loads(result.stdout)
+print(json.dumps(reply,separators=(",",":")))
+'''
 
 
 def picker(*arguments, token=None):
@@ -129,6 +175,65 @@ def pinned_ssh_key(claim):
     if claim.get("ssh_key_id") != configured:
         raise DNSBlocked("The approved owner SSH key differs from the runner's configured key.")
     return configured
+
+
+def submit_environment_fix(root, claim, run=subprocess.run):
+    deployment = str(UUID(claim["deployment_id"]))
+    instance = str(UUID(claim["instance_id"]))
+    UUID(claim["project_id"])
+    UUID(claim["deployment_project_id"])
+    UUID(claim["request_id"])
+    UUID(claim["claim_id"])
+    ipv4 = str(claim["ipv4"])
+    if claim["environment"] not in {"DEV", "QA", "DEPLOYED"}:
+        raise ValueError("Environment binding is invalid.")
+    identity = root / "recovery" / deployment
+    known_hosts = identity.with_name(identity.name + ".known_hosts")
+    if (not identity.is_file() or not known_hosts.is_file()
+            or stat.S_IMODE(identity.stat().st_mode) != 0o600):
+        raise ValueError("The enrolled deployment SSH binding is unavailable.")
+    payload = {key: claim[key] for key in (
+        "request_id", "deployment_id", "deployment_project_id", "project_id",
+        "instance_id", "environment", "title", "instruction"
+    )}
+    command = [
+        "ssh", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
+        "-o", "ConnectTimeout=8", "-o", "StrictHostKeyChecking=yes",
+        "-o", "UserKnownHostsFile=" + str(known_hosts), "-i", str(identity),
+        "root@" + ipv4, "python3", "-c", shlex.quote(REMOTE_LAUNCHER),
+    ]
+    result = run(command, input=json.dumps(payload), text=True, capture_output=True,
+                 timeout=60, check=True)
+    remote = json.loads(result.stdout)
+    if not isinstance(remote, dict) or not remote.get("request_id") or not remote.get("task_id"):
+        raise ValueError("The remote deployment did not return a task receipt.")
+    return {"executor": "enrolled-smd-runner", "deployment_id": deployment,
+            "instance_id": instance, "environment": claim["environment"], "remote": remote}
+
+
+def process_environment_fix(root):
+    claim = picker("fix-claim")
+    if not claim:
+        return False
+    status, receipt, reason = "delivered", None, None
+    try:
+        receipt = submit_environment_fix(root, claim)
+    except ValueError as error:
+        status, reason = "denied", str(error)
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError, KeyError):
+        status, reason = "unconfirmed", "The enrolled operator could not confirm remote task delivery."
+    arguments = ["fix-result", claim["request_id"], claim["claim_id"], status]
+    if receipt:
+        with NamedTemporaryFile("w", dir=root, prefix=".smd-fix-receipt-", delete=False) as pending:
+            json.dump(receipt, pending)
+            receipt_path = Path(pending.name)
+        try:
+            picker(*arguments, "--receipt-file", str(receipt_path))
+        finally:
+            receipt_path.unlink(missing_ok=True)
+    else:
+        picker(*arguments, "--failure-reason", reason)
+    return True
 
 
 def recovery_public_key(path, task):
@@ -329,6 +434,8 @@ def cycle(root):
         legacy.replace(destination)
         sync_directory(root)
 
+    if os.getenv("SMARTDEV_SMD_ENVIRONMENT_FIXES") == "1":
+        process_environment_fix(root)
     pending = sorted(root.glob("*.json"), key=lambda path: path.stat().st_mtime)
     errors = False
     # Retain each in-flight claim while allowing new jobs to start on subsequent ticks.

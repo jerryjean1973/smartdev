@@ -305,11 +305,13 @@ def archive(project_id: UUID):
     return {"ok": True}
 
 from compute_console import router as compute_console_router
+from smd_environment_fixes import router as smd_environment_fixes_router
 from smd_owner_config import router as smd_owner_router
 from smd_tenant_access import router as smd_tenant_router
 app.include_router(smd_tenant_router)
 app.include_router(smd_owner_router)
 app.include_router(compute_console_router)
+app.include_router(smd_environment_fixes_router)
 app.include_router(memory_router)
 app.include_router(github_router)
 

@@ -24,7 +24,8 @@ class ExternalTaskTests(unittest.TestCase):
                                      {"id": self.foreign, "project_id": self.other, "title": "Foreign", "status": "Active"}])
         intake = self.enterContext(patch("external_mcp_tasks.mcp_intake.receive"))
         intake.side_effect = lambda project,request,kind,prompt,title,task,*args,**kwargs: {
-            "task_id":task or self.task,"admission":"created" if kind=="create" else kind,"delivery":"received"}
+            "task_id":task or self.task,"board_item":task or self.task,
+            "admission":"created" if kind=="create" else kind,"delivery":"received"}
         self.history.pending_task.side_effect = LookupError("Task not available")
         self.client._workspace = Mock(return_value={"objective": self.task, "conversationId": self.task,
                                                     "messageId": self.request, "executionId": "receipt"})
@@ -109,3 +110,12 @@ class ExternalTaskTests(unittest.TestCase):
             require.assert_called_once_with("Bearer example", "write", "https://example.invalid/api/mcp")
             self.assertIn('error="insufficient_scope"', failure.exception.headers["WWW-Authenticate"])
         self.assertIn("error", dispatch(frame, self.client))
+
+    def test_environment_fix_is_explicitly_selected_and_write_scoped(self):
+        operation = "smartdev_request_environment_fix"
+        tool = next(tool for tool in TOOLS if tool["name"] == operation)
+        self.assertEqual(tool["securitySchemes"][0]["scopes"], ["write"])
+        self.assertEqual(tool["inputSchema"]["properties"]["environment"]["enum"],
+                         ["DEV", "QA", "DEPLOYED"])
+        self.assertIn("deployment_id", tool["inputSchema"]["required"])
+        self.assertIn("project_id", tool["inputSchema"]["required"])
