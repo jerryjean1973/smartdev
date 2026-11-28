@@ -113,6 +113,7 @@ def main():
 SMD_PUBLIC_HOST={host}
 SMD_PORTAL_ORIGIN=https://{host}
 SMD_CODER_ORIGIN=https://{coder_host}
+SMD_ENVIRONMENT={next((value.upper() for value in ('qa','preprod','prod','dev') if value in host.lower().split('.')), 'DEV')}
 """)
     if selected:
         prepare(data, selected)

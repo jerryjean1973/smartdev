@@ -1,5 +1,6 @@
 """Project-scoped provider broker for live managed coding-agent assignments."""
 import base64
+import hashlib
 import json
 import re
 import secrets
@@ -34,6 +35,7 @@ class RunAccess(BaseModel):
     objective_id: UUID | None = None
     conversation_id: UUID | None = None
     agent: str | None = None
+    environment: str | None = None
 
 
 def selected_agent(project_id):
@@ -172,6 +174,17 @@ def verify_anthropic_key(key):
         raise HTTPException(503, "Claude Code authentication check is temporarily unavailable.") from None
 
 
+def credential_marker(project_id, agent):
+    from smd_owner_client import enrolled, keys
+    if enrolled():
+        digest = hashlib.sha256()
+        for key_file in keys():
+            digest.update(hashlib.sha256(key_file.read_bytes()).digest())
+        return digest.hexdigest()
+    key = credential(project_id) if agent == "codex_cli" else anthropic_credential(project_id)
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
 def check_credentials(project_id, agent):
     from smd_owner_client import enrolled, owner_json
     if agent == "codex_cli":
@@ -180,13 +193,14 @@ def check_credentials(project_id, agent):
             owner_json(project_id, "codex-models")
         else:
             verify_provider_key(key)
-        return
+        return credential_marker(project_id, agent)
     if agent != "claude_code":
         raise HTTPException(409, "Unsupported coding agent selection.")
     if enrolled():
         owner_json(project_id, "claude-models")
     else:
         verify_anthropic_key(anthropic_credential(project_id))
+    return credential_marker(project_id, agent)
 
 
 @router.post("/workspace-memory/{project_id}/agent-selection")
@@ -202,7 +216,7 @@ def preflight(project_id: UUID, run: RunAccess):
     for attempt in range(2):
         active_run(project_id, run)
         try:
-            check_credentials(project_id, agent)
+            marker = check_credentials(project_id, agent)
             break
         except HTTPException as exc:
             if attempt or exc.detail not in {
@@ -212,10 +226,13 @@ def preflight(project_id: UUID, run: RunAccess):
                 raise
             time.sleep(.5)
     try:
+        from access_inventory import resolve
+        inventory = resolve(project_id, run.environment, agent, marker)
         bearer = secrets.token_urlsafe(32)
         queue().set("smartdev:codex-bearer:" + bearer,
-                    json.dumps([str(project_id), run.model_dump(mode="json"), agent]), ex=24 * 60 * 60)
-        return {"bearer": bearer, "agent": agent}
+                    json.dumps([str(project_id), run.model_dump(mode="json"), agent,
+                                inventory["receipt"]["sha256"]]), ex=24 * 60 * 60)
+        return {"bearer": bearer, "agent": agent, "access_inventory": inventory}
     except RedisError:
         raise HTTPException(503, "Codex authentication check is temporarily unavailable.") from None
 
@@ -238,6 +255,12 @@ def authorize_call(project_id, authorization, expected_agent="codex_cli"):
     if agent != expected_agent:
         raise HTTPException(403, "Coding-agent capability cannot be used with another provider.")
     active_run(project_id, RunAccess.model_validate(run))
+    if len(payload) < 4:
+        raise HTTPException(401, "Managed coding-agent access inventory is missing; start a fresh session.")
+    from access_inventory import resolve
+    current = resolve(project_id, run.get("environment"), agent, credential_marker(project_id, agent))
+    if not secrets.compare_digest(payload[3], current["receipt"]["sha256"]):
+        raise HTTPException(401, "Managed access bindings or credentials changed; renew with a fresh session preflight.")
     if expected_agent == "codex_cli":
         return deployment_credential(project_id)
     from smd_owner_client import enrolled

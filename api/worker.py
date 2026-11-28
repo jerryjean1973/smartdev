@@ -12,18 +12,32 @@ from redis.exceptions import RedisError
 from core import project_token, workspace_name
 from store import database, queue
 
-def provision(client, project):
-    name = workspace_name(project["id"])
+def write_workspace_access(project_id):
+    """Reconcile protected bootstrap configuration, including existing workspaces."""
+    name = workspace_name(project_id)
     config = Path("/workspace-config") / name
     config.mkdir(mode=0o755, exist_ok=True)
     with NamedTemporaryFile(mode="w", dir=config, delete=False) as pending:
         json.dump({
-            "token": project_token(bytes.fromhex(os.environ["MEMORY_ACCESS_KEY"]), project["id"]),
-            "url": f'{os.getenv("MEMORY_WORKSPACE_ORIGIN", os.environ["PORTAL_ORIGIN"])}/api/workspace-memory/{project["id"]}',
+            "token": project_token(bytes.fromhex(os.environ["MEMORY_ACCESS_KEY"]), project_id),
+            "url": f'{os.getenv("MEMORY_WORKSPACE_ORIGIN", os.environ["PORTAL_ORIGIN"])}/api/workspace-memory/{project_id}',
+            "environment": os.getenv("SMARTDEV_ENVIRONMENT", "DEV").upper(),
         }, pending)
         pending.flush()
         os.fchmod(pending.fileno(), 0o444)
     os.replace(pending.name, config / "memory.json")
+
+
+def reconcile_workspace_access():
+    with database() as db:
+        projects = db.execute("SELECT id FROM projects WHERE NOT archived AND status='created'").fetchall()
+    for project in projects:
+        write_workspace_access(project["id"])
+
+
+def provision(client, project):
+    name = workspace_name(project["id"])
+    write_workspace_access(project["id"])
     owner = quote(os.environ["CODER_OWNER"], safe="")
     lookup = f"/api/v2/users/{owner}/workspace/{name}"
     response = client.get(lookup)
@@ -74,6 +88,7 @@ def run_one(client):
     return True
 
 def main():
+    reconcile_workspace_access()
     with httpx.Client(base_url=os.environ["CODER_API_URL"], timeout=20, headers={
         "Coder-Session-Token": os.environ["CODER_TOKEN"],
     }) as client:

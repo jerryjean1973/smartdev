@@ -54,7 +54,8 @@ def response(row):
 def review(project_id: UUID, body: ArchitectReviewRequest):
     active_run(project_id, RunAccess(execution_id=body.execution_id,
                                      objective_id=body.objective_id,
-                                     conversation_id=body.conversation_id))
+                                     conversation_id=body.conversation_id,
+                                     environment="DEV"))
     binding = {"instruction": body.instruction, "plan": body.plan,
                "git_head": body.git_head, "branch": body.branch,
                "architecture_context": body.architecture_context}

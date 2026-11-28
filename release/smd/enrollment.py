@@ -43,7 +43,8 @@ def prepare(data, selected):
         os.chown(directory, 0, 1000)
         directory.chmod(0o750)
         memory = {"url": f'{environment["SMD_PORTAL_ORIGIN"]}/api/workspace-memory/{project["id"]}',
-                  "token": hmac.new(key, f'memory:{project["id"]}'.encode(), hashlib.sha256).hexdigest()}
+                  "token": hmac.new(key, f'memory:{project["id"]}'.encode(), hashlib.sha256).hexdigest(),
+                  "environment": environment["SMD_ENVIRONMENT"]}
         # The client credential is visible only through the workspace's own mounted directory.
         write_atomic(directory / "memory.json", json.dumps(memory), 0o444)
     deployment = {"workspaces": workspaces, "data_dir": str(data),

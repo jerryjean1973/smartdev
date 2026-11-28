@@ -67,6 +67,25 @@ class FoundationTests(unittest.TestCase):
         self.assertEqual(project_token(key, a), project_token(key, a))
         self.assertNotEqual(project_token(key, a), project_token(key, b))
 
+    def test_coding_preflight_selects_environment_and_returns_inventory(self):
+        receipt = {"id": str(UUID(int=9)), "sha256": "a" * 64}
+        response = {"agent": "codex_cli", "bearer": "leased", "access_inventory": {
+            "actual_executor": "codex_cli", "receipt": receipt,
+        }}
+        with (patch.object(wrapper, "memory_settings", return_value={
+                  "url": "https://cc.qa.example/api/workspace-memory/project", "environment": "QA",
+              }), patch.object(wrapper, "exchange", return_value=response) as exchange):
+            result = wrapper.codex_preflight({"execution_id": str(UUID(int=1)), "agent": "codex_cli"})
+        self.assertEqual(exchange.call_args.args[0]["environment"], "QA")
+        self.assertEqual(result["access_inventory"]["receipt"], receipt)
+
+    def test_coding_preflight_refuses_missing_environment(self):
+        with (patch.object(wrapper, "memory_settings", return_value={"url": "https://cc.example/api"}),
+              patch.object(wrapper, "exchange") as exchange,
+              self.assertRaisesRegex(RuntimeError, "Explicit SMD environment selection")):
+            wrapper.codex_preflight({"execution_id": str(UUID(int=1)), "agent": "codex_cli"})
+        exchange.assert_not_called()
+
     def test_main_instruction_uses_write_lease_and_never_creates_objective(self):
         args = Namespace(conversation=UUID(int=1), conversation_execution=UUID(int=2),
                          terms="sidebar greeting", include_shared=False,
