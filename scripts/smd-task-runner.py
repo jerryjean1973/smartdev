@@ -33,8 +33,10 @@ MAX_INSTALLER_BYTES = 1024 * 1024
 RECEIPT_TIMEOUT = 3600
 PROVIDER_IP_TIMEOUT = 600
 
-REMOTE_INNER_SUBMIT = r'''import json,os,sys
+REMOTE_INNER_SUBMIT = r'''import inspect,json,os,sys
+from pathlib import Path
 from uuid import UUID
+import httpx
 from external_mcp_tasks import ScopedTasks
 from governance import task_navigation
 from main import projects
@@ -47,15 +49,39 @@ if os.getenv("SMD_PORTAL_TASK") != deployment:
     raise SystemExit("Deployment identity mismatch")
 with database() as db:
     owner=db.execute("SELECT id FROM smartdev_owner WHERE singleton").fetchone()["id"]
-client=ScopedTasks({"project_ids":[project],"owner_id":owner},
-                   projects=projects,task_navigation=task_navigation)
-prompt=("Tenant-scoped environment fix request. Target deployment: "+deployment+
-        ". Explicit environment: "+payload["environment"]+
-        ". Work only in this deployment and project. Do not route to another workspace. "
-        "Return the actual executor and durable receipt.\n\n"+payload["instruction"])
-result=client.create_task(project,prompt,payload["request_id"],title=payload["title"],
-                          scope="unassigned",work_key="environment-fix:"+deployment+":"+payload["environment"])
-print(json.dumps(result,separators=(",",":")))
+temporary_token=None
+if not os.getenv("CODER_TOKEN"):
+    credential=json.loads(Path("/run/command-coder/owner.json").read_text())
+    with httpx.Client(base_url=os.environ["CODER_API_URL"],timeout=7,trust_env=False) as coder:
+        login=coder.post("/api/v2/users/login",json={"email":credential["email"],
+                                                       "password":credential["password"]})
+        login.raise_for_status()
+        temporary_token=login.json()["session_token"]
+    os.environ["CODER_TOKEN"]=temporary_token
+try:
+    client=ScopedTasks({"project_ids":[project],"owner_id":owner},
+                       projects=projects,task_navigation=task_navigation)
+    prompt=("Tenant-scoped environment fix request. Target deployment: "+deployment+
+            ". Explicit environment: "+payload["environment"]+
+            ". Work only in this deployment and project. Do not route to another workspace. "
+            "Return the actual executor and durable receipt.\n\n"+payload["instruction"])
+    options={"title":payload["title"]}
+    parameters=inspect.signature(client.create_task).parameters
+    if "scope" in parameters:
+        options["scope"]="unassigned"
+    if "work_key" in parameters:
+        options["work_key"]="environment-fix:"+deployment+":"+payload["environment"]
+    result=client.create_task(project,prompt,payload["request_id"],**options)
+    print(json.dumps(result,separators=(",",":")))
+finally:
+    if temporary_token:
+        os.environ.pop("CODER_TOKEN",None)
+        try:
+            with httpx.Client(base_url=os.environ["CODER_API_URL"],timeout=7,trust_env=False) as coder:
+                coder.post("/api/v2/users/logout",
+                           headers={"Coder-Session-Token":temporary_token})
+        except httpx.HTTPError:
+            pass
 '''
 
 REMOTE_LAUNCHER = r'''import json,subprocess,sys,urllib.request
@@ -205,8 +231,11 @@ def submit_environment_fix(root, claim, run=subprocess.run):
     result = run(command, input=json.dumps(payload), text=True, capture_output=True,
                  timeout=60, check=True)
     remote = json.loads(result.stdout)
-    if not isinstance(remote, dict) or not remote.get("request_id") or not remote.get("task_id"):
+    if (not isinstance(remote, dict) or not remote.get("task_id") or not remote.get("execution_id")):
         raise ValueError("The remote deployment did not return a task receipt.")
+    if remote.get("request_id") not in (None, str(UUID(claim["request_id"]))):
+        raise ValueError("The remote deployment returned a receipt for another request.")
+    remote["request_id"] = str(UUID(claim["request_id"]))
     return {"executor": "enrolled-smd-runner", "deployment_id": deployment,
             "instance_id": instance, "environment": claim["environment"], "remote": remote}
 
