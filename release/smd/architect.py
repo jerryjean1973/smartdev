@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import re
 from urllib.request import Request, urlopen
 
 from fastapi import FastAPI
@@ -11,6 +12,16 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 OLLAMA = os.getenv("SMARTDEV_ARCHITECT_OLLAMA_URL", "http://ollama:11434/api/").rstrip("/") + "/"
 MODEL = os.getenv("SMARTDEV_ARCHITECT_MODEL", "qwen2.5:1.5b")
 CLASSES = {"ARCHITECTURE_PRESERVING", "ARCHITECTURE_IMPACTING", "CANONICAL_CHANGE"}
+CANONICAL_INTENT = re.compile(
+    r"\b(?:remove|replace|bypass|weaken|disable|rewrite|redefine|abolish)\b.{0,160}"
+    r"\b(?:tenant[- ]isolation|evidence[- ]authority|dap|vap|ttb|mig[- ]authority)\b",
+    re.I | re.S,
+)
+IMPACTING_INTENT = re.compile(
+    r"\b(?:remove|replace|migrate|redesign|restructure|replatform)\b.{0,160}"
+    r"\b(?:architecture|boundary|interface|dependency|network|authentication|authorization|tenant|deployment)\b",
+    re.I | re.S,
+)
 
 
 class ProposedChange(BaseModel):
@@ -82,6 +93,12 @@ Planned task and authoritative context:
     classification = response["response"].strip()
     if classification not in CLASSES:
         classification = "REVIEW_REQUIRED"
+    intent = json.dumps({"task": change.task, "plan": change.plan},
+                        sort_keys=True, ensure_ascii=False)
+    if CANONICAL_INTENT.search(intent):
+        classification = "CANONICAL_CHANGE"
+    elif IMPACTING_INTENT.search(intent) and classification == "ARCHITECTURE_PRESERVING":
+        classification = "ARCHITECTURE_IMPACTING"
     preserving = classification == "ARCHITECTURE_PRESERVING"
     return {
         "model": MODEL,

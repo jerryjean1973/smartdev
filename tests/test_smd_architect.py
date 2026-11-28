@@ -1,0 +1,36 @@
+import importlib.util
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+SOURCE = Path(__file__).resolve().parents[1] / "release" / "smd" / "architect.py"
+spec = importlib.util.spec_from_file_location("smd_architect", SOURCE)
+architect = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = architect
+spec.loader.exec_module(architect)
+
+
+class SmdArchitectTests(unittest.TestCase):
+    def review(self, task, plan):
+        body = architect.PlannedTask(task=task, plan=plan,
+                                     architecture_context="Tenant isolation is canonical.")
+        with patch.object(architect, "model_request",
+                          return_value={"response": "ARCHITECTURE_PRESERVING"}):
+            return architect.review(body)
+
+    def test_slm_cannot_downgrade_explicit_canonical_change(self):
+        result = self.review("Replace tenant isolation and evidence authority.",
+                             {"scope": "platform"})
+        self.assertEqual(result["classification"], "CANONICAL_CHANGE")
+        self.assertFalse(result["coherence_approved"])
+
+    def test_preserving_read_only_plan_remains_approved(self):
+        result = self.review("Report the current branch and commit without edits.",
+                             {"kind": "read-only verification"})
+        self.assertEqual(result["classification"], "ARCHITECTURE_PRESERVING")
+        self.assertTrue(result["coherence_approved"])
+
+
+if __name__ == "__main__":
+    unittest.main()
