@@ -14,7 +14,7 @@ from smd_export_policy import RELEASE_FILES, TEMPLATE, additions
 
 SOURCE = Path(__file__).resolve().parents[1] / "release" / "smd"
 IMAGES = {
-    "API": "smartdev-api:architect-taskboard-ce0df80",
+    "API": "smartdev-api:architect-taskboard-gitwrite-76d9328",
     "PORTAL": "smartdev-portal:architect-column-ce0df80",
     "POSTGRES": "pgvector/pgvector:pg17",
     "REDIS": "redis:7-alpine",
