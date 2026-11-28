@@ -152,7 +152,7 @@ async function changeConversation(action, details={}) {
     setPointer(snapshot);
     explicitTask=false;
     leaveNewTask();
-    prompt.placeholder='Message Codex';
+    prompt.placeholder='Message coding agent';
     objective.value=pointerState?.focusedTask || '';
     restoreDraft();
     void refresh();
@@ -336,7 +336,7 @@ function timeline(text, start, key, reset) {
       const card=element('div','chat-event '+entry.type);
       const elapsed=entry.at && (Date.now()-new Date(entry.at).getTime())/1000;
       const relative=Number.isFinite(elapsed) ? (elapsed<60?'Just now':elapsed<3600?Math.floor(elapsed/60)+' min ago':new Date(entry.at).toLocaleString()) : '';
-      const name=entry.type==='user'?'You':entry.type==='question'?'Codex question':'Codex';
+      const name=entry.type==='user'?'You':entry.type==='question'?'Agent question':'Agent';
       const messageHeader=element('div','chat-message-header');
       messageHeader.append(element('strong','',name+(relative?' · '+relative:'')));
       if (entry.type==='agent' && entry.copyId) messageHeader.append(responseCopyButton(entry.copyId));
@@ -403,7 +403,7 @@ function timeline(text, start, key, reset) {
   if (!entries.length) fragment.append(element('p','chat-empty','No messages yet.'));
   if (result===130) fragment.append(element('p','chat-result','Execution stopped. Send a message to continue this task.'));
   else if (Number.isInteger(result) && result!==0 && auth?.status!=='unavailable')
-    fragment.append(element('p','chat-result has-failure','Codex could not finish this run. Review the conversation or retry.'));
+    fragment.append(element('p','chat-result has-failure','The coding agent could not finish this run. Review the conversation or retry.'));
   authPanel.hidden=auth?.status!=='unavailable';
   document.getElementById('auth-message').textContent=auth?.message || '';
   reconnect.hidden=authPanel.hidden;
@@ -619,7 +619,7 @@ function displayWorkflow(state) {
       form.append(review);
     } else if (item.status==='answering') {
       const progress=document.createElement('small');
-      progress.textContent='Codex is processing the reply.';
+      progress.textContent='The coding agent is processing the reply.';
       form.append(progress);
     } else form.append(send);
     decisions.append(form);
@@ -769,10 +769,10 @@ function buttons(running, runs=[]) {
     !pointerState?.focusedTask && item.conversationId===pointerState?.active.id);
   const observed=runs.find(run=>run.execution===executionView?.latest?.execution) || runs[0];
   const status=running && observed ? (observed.state[0].toUpperCase()+observed.state.slice(1)) : running ? action ? (action.type==='command_execution' && /\b(test|pytest|playwright|unittest)\b/i.test(action.command) ? 'Testing' : 'Executing') : 'Thinking'
-    : resuming ? 'Resuming Codex…' : decision ? 'Waiting for input' : result===0 ? 'Turn completed' : result===130 ? 'Stopped' : result ? 'Failed' : 'Idle';
+    : resuming ? 'Resuming agent…' : decision ? 'Waiting for input' : result===0 ? 'Turn completed' : result===130 ? 'Stopped' : result ? 'Failed' : 'Idle';
   const waiting=[...(executionView?.runStates || new Map()).values()].some(run=>run.state==='queued');
   document.getElementById('activity-indicator').hidden=!running;
-  document.getElementById('run-label').textContent='Codex · '+(!running && !decision && waiting?'Next prompt queued':status);
+  document.getElementById('run-label').textContent='Agent · '+(!running && !decision && waiting?'Next prompt queued':status);
 
   review.disabled=!objective.value;
 }
@@ -940,14 +940,14 @@ window.acquireVsCodeApi=()=>({postMessage:async message=>{
       saveLocal(requestKey,requestId);
       const anticipatesReply=!submittedTask && !creating && workflowState?.state.decisions.some(item=>
         !item.objective && item.status==='pending' && item.conversationId===conversationId);
-      if (anticipatesReply) document.getElementById('run-label').textContent='Resuming Codex…';
+      if (anticipatesReply) document.getElementById('run-label').textContent='Resuming agent…';
       const data=await api('run',{...message,objective:submittedTask,tree:scope,newTask:creating,explicitTask:!!submittedTask,conversationId,requestId},'POST');
-      if (data.status==='resuming') document.getElementById('run-label').textContent='Resuming Codex…';
+      if (data.status==='resuming') document.getElementById('run-label').textContent='Resuming agent…';
       saveLocal(requestKey,'');
       explicitTask=false;
       const created=creating;
       leaveNewTask();
-      prompt.placeholder='Message Codex';
+      prompt.placeholder='Message coding agent';
       if (created && data.objective) {
         for (let i=0;i<8;i++) {
           if (await changeConversation('focus',{task_id:data.objective})) break;
@@ -972,7 +972,7 @@ window.acquireVsCodeApi=()=>({postMessage:async message=>{
       await changeConversation('new');
     } else {
       await api(message.type==='cancel'?'cancel':'reset',{tree:scope,objective:objective.value,conversationId:pointerState?.active.id},'POST');
-      if (message.type==='new') statusText.textContent='Started a fresh Codex session for this objective.';
+      if (message.type==='new') statusText.textContent='Started a fresh coding-agent session for this objective.';
     }
   } catch(error) { statusText.textContent=error.message; buttons(false); }
   finally { pending=false; void refresh(); }

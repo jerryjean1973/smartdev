@@ -34,7 +34,7 @@ async function conversationCopy(stream, {project,main,excluded,now,mode,name,res
     const prior=messages.get(key);
     if (prior?.completed && event.type==='item.updated') continue;
     messages.set(key,{at:prior?.at ?? at,order:prior?.order ?? offset,value,
-      speaker:agent?'Codex':'User',completed:event.type==='item.completed'});
+      speaker:agent?'Agent':'User',completed:event.type==='item.completed'});
   }
   if (mode==='latest' || mode==='response') return latest?.value || '';
   if (!messages.size) return '';

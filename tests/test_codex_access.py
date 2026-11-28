@@ -38,3 +38,25 @@ class CodexCredentialTests(unittest.TestCase):
             with self.assertRaisesRegex(HTTPException, text) as error:
                 codex_access.verify_provider_key(self.key)
             self.assertNotIn(self.key, str(error.exception))
+
+    @patch.object(codex_access, "call")
+    def test_claude_key_is_project_scoped_and_never_returned_in_status(self, vault):
+        vault.return_value = {"data": {"data": {"value": self.key}}}
+        self.assertEqual(codex_access.anthropic_credential(self.project), self.key)
+        self.assertTrue(codex_access.agent_configured(self.project, "claude_code"))
+        self.assertEqual(vault.call_args_list[0].args[1], f"data/projects/{self.project}/DEV/ANTHROPIC_API_KEY")
+
+    @patch.object(codex_access, "call", return_value=None)
+    def test_missing_claude_key_has_specific_configuration_action(self, _vault):
+        with self.assertRaisesRegex(HTTPException, "Set ANTHROPIC_API_KEY"):
+            codex_access.anthropic_credential(self.project)
+
+    @patch.object(codex_access.httpx, "Client")
+    def test_anthropic_preflight_distinguishes_auth_and_rate_limits(self, client):
+        models = client.return_value.__enter__.return_value
+        models.get.return_value = httpx.Response(200)
+        codex_access.verify_anthropic_key(self.key)
+        for status, text in ((401, "expired, revoked, or invalid"), (429, "rate limit")):
+            models.get.return_value = httpx.Response(status)
+            with self.assertRaisesRegex(HTTPException, text):
+                codex_access.verify_anthropic_key(self.key)

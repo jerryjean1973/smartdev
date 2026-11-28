@@ -1,4 +1,5 @@
 """Authorize owner-backed operations against the current tenant on every use."""
+import base64
 import json
 import time
 from uuid import UUID
@@ -59,7 +60,9 @@ def register_existing(task:UUID, body:Identity):
 
 
 def identity(db, task, project, instance, operation, timestamp, nonce, signature, body):
-    allowed={"portal-generation","portal-auth","domain-challenge","domains","domain-report","catalog","codex-models","codex-responses","model","tenant-bindings","tenant-secret","deployment-access"}
+    allowed={"portal-generation","portal-auth","domain-challenge","domains","domain-report","catalog",
+             "codex-models","codex-responses","claude-models","claude-messages","claude-count-tokens",
+             "model","tenant-bindings","tenant-secret","deployment-access"}
     allowed.update("verify-"+k for k,v in PROVIDERS.items() if v.endpoint)
     if operation not in allowed:
         raise HTTPException(422,"Unknown configuration operation.")
@@ -119,6 +122,19 @@ def project_openai(db,project,state):
         value=((secret or {}).get("data",{}).get("data") or {}).get("credential")
     from codex_access import validate_key
     return validate_key(value) if value else None
+
+
+def project_anthropic(db,project,state):
+    value=runtime_value(db,project,state,"DEV","ANTHROPIC_API_KEY")
+    if not value and state["owner"]:
+        secret=call("GET",f"data/projects/{project}/DEV/ANTHROPIC_API_KEY",missing=True)
+        value=((secret or {}).get("data",{}).get("data") or {}).get("value")
+    if not value and state["owner"]:
+        secret=call("GET","data/integrations/anthropic",missing=True)
+        value=((secret or {}).get("data",{}).get("data") or {}).get("credential")
+    if not isinstance(value,str) or not 16<=len(value.strip())<=4096:
+        return None
+    return value.strip()
 
 
 def runtime_defaults(db, project, state):
@@ -245,6 +261,13 @@ def operation_result(db,task,project,operation,state,body):
             raise HTTPException(409,"Configure the project OpenAI integration.")
         verify_provider_key(key)
         return {"ready":True}
+    if operation=="claude-models":
+        from codex_access import verify_anthropic_key
+        key=project_anthropic(db,project,state)
+        if not key:
+            raise HTTPException(409,"Configure the project Anthropic integration.")
+        verify_anthropic_key(key)
+        return {"ready":True}
     raise HTTPException(422,"Unknown configuration operation.")
 
 
@@ -269,19 +292,43 @@ async def configure(task: UUID,request:Request):
     streaming=False
     try:
         state=await run_in_threadpool(identity,db,task,project,instance,operation,timestamp,nonce,signature,body)
-        if operation!="codex-responses":
+        streaming_operations={"codex-responses","claude-messages","claude-count-tokens"}
+        if operation not in streaming_operations:
             result=await run_in_threadpool(operation_result,db,task,project,operation,state,body)
             await run_in_threadpool(db.commit)
             from fastapi.responses import JSONResponse
             return JSONResponse(result,headers={"Cache-Control":"no-store"})
-        key=await run_in_threadpool(project_openai,db,project,state)
-        if not key:
-            raise HTTPException(409,"Configure the project OpenAI integration.")
+        if operation=="codex-responses":
+            key=await run_in_threadpool(project_openai,db,project,state)
+            if not key:
+                raise HTTPException(409,"Configure the project OpenAI integration.")
+            endpoint="https://api.openai.com/v1/responses"
+            upstream_body=body
+            headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"}
+            from codex_access import check_code as provider_check
+        else:
+            key=await run_in_threadpool(project_anthropic,db,project,state)
+            if not key:
+                raise HTTPException(409,"Configure the project Anthropic integration.")
+            try:
+                envelope=json.loads(body)
+                upstream_body=base64.b64decode(envelope["body"],validate=True)
+                version=envelope.get("anthropic_version") or "2023-06-01"
+                beta=envelope.get("anthropic_beta") or ""
+                if not isinstance(version,str) or not isinstance(beta,str) or len(version)>100 or len(beta)>2000:
+                    raise ValueError
+            except (ValueError,TypeError,KeyError):
+                raise HTTPException(422,"Invalid Claude Code provider request.") from None
+            endpoint="https://api.anthropic.com/v1/messages"+("/count_tokens" if operation=="claude-count-tokens" else "")
+            headers={"x-api-key":key,"anthropic-version":version,"Content-Type":"application/json"}
+            if beta:
+                headers["anthropic-beta"]=beta
+            from codex_access import check_anthropic_code as provider_check
         client=httpx.AsyncClient(trust_env=False,follow_redirects=False,timeout=httpx.Timeout(180,connect=8))
-        upstream=await client.send(client.build_request("POST","https://api.openai.com/v1/responses",
-            content=body,headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"}),stream=True)
-        from codex_access import check_code
-        check_code(upstream.status_code)
+        upstream=await client.send(client.build_request("POST",endpoint,
+            content=upstream_body,headers=headers),stream=True)
+        provider_check(upstream.status_code)
+        await run_in_threadpool(db.commit)
         async def stream():
             try:
                 async for part in upstream.aiter_bytes():

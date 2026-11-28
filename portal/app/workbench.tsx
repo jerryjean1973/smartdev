@@ -600,7 +600,7 @@ export default function Workbench({projects, createForm, signOut, updateProject,
               event.currentTarget.closest('details')?.removeAttribute('open');
               setShowIntegrations(true);
             }}>Integrations</button>
-            <button onClick={() => setPrefs(p => ({...p, showCommand: !p.showCommand}))} aria-controls="command-panel" aria-expanded={prefs.showCommand}>{prefs.showCommand ? 'Hide Codex' : 'Show Codex'}</button>
+            <button onClick={() => setPrefs(p => ({...p, showCommand: !p.showCommand}))} aria-controls="command-panel" aria-expanded={prefs.showCommand}>{prefs.showCommand ? 'Hide agent' : 'Show agent'}</button>
             <button onClick={() => {setExpandedView(null);setPrefs(p=>({...p,hidePreview:!p.hidePreview}));}}>{showView ? 'Hide preview workspace' : 'Show preview workspace'}</button>
             <button onClick={() => setPrefs(p => ({...p, dark: !p.dark}))}>{prefs.dark ? 'Light theme' : 'Dark theme'}</button>
             {development.status === 'stopped' && <button disabled={working} onClick={() => void lifecycle('start')}>Start DEV</button>}
@@ -738,17 +738,17 @@ export default function Workbench({projects, createForm, signOut, updateProject,
       </div>}
       <aside className="wb-command" id="command-panel" aria-label="AI conversation" hidden={showTaskboard || !showCommand}>
         {!showTaskDetails && !creating && selected && coderConnection === 'connected' && !development.chat_ready &&
-          <div className="wb-empty"><h3>{development.status === 'stopped' ? 'DEV is stopped' : 'Codex is waiting for DEV'}</h3>
-            <p>{development.status === 'stopped' ? 'Start the workspace to open Codex.' : 'Chat opens when the workspace reports it ready.'}</p>
+          <div className="wb-empty"><h3>{development.status === 'stopped' ? 'DEV is stopped' : 'The coding agent is waiting for DEV'}</h3>
+            <p>{development.status === 'stopped' ? 'Start the workspace to open the coding agent.' : 'Chat opens when the workspace reports it ready.'}</p>
             {development.status === 'stopped' && <button disabled={working} onClick={() => void lifecycle('start')}>Start DEV</button>}
           </div>}
         {!showTaskDetails && !creating && selected && coderConnection !== 'connected' && <div className="wb-empty" role="status">
-          <h3>{coderConnection === 'connecting' ? 'Connecting to Codex' : 'Coder connection unavailable'}</h3>
+          <h3>{coderConnection === 'connecting' ? 'Connecting to coding agent' : 'Coder connection unavailable'}</h3>
           {coderConnection === 'failed' && <button onClick={() => void connectCoder()}>Reconnect</button>}
         </div>}
         {!managementOnly && available.filter(project => chatOpened.includes(project.id) && project.workspace_url).map(project =>
           <iframe key={project.id} data-chat-project={project.id} className="wb-chat" hidden={showTaskDetails || creating || coderConnection !== 'connected' || project.id !== selected?.id}
-            title={project.name + ' Codex chat'} src={project.workspace_url!.replace(/\/$/, '') + '/apps/codex-chat/'}
+            title={project.name + ' coding-agent chat'} src={project.workspace_url!.replace(/\/$/, '') + '/apps/codex-chat/'}
             allow="clipboard-read; clipboard-write" />)}
         {runtimeError && <p role="alert" className="error">{runtimeError}</p>}
         {failure && <p role="alert" className="error">{failure}</p>}

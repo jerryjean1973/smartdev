@@ -1,4 +1,4 @@
-/* Projection of the existing Codex JSONL transcript into conversation and diagnostics. */
+/* Projection of the managed coding-agent JSONL transcript into conversation and diagnostics. */
 function conversation(text, start=0, scope={}) {
   const entries=[];
   const tools=new Map();
@@ -143,10 +143,10 @@ function conversation(text, start=0, scope={}) {
         Object.assign(action,{state,data,endedAt:at});
       } else tools.set(toolId,technical(id,label,data,state,at));
     } else if (event.type==='error' || event.type==='turn.failed') {
-      const message=event.message || event.error?.message || 'Codex reported an execution error.';
+      const message=event.message || event.error?.message || 'The coding agent reported an execution error.';
       if (/\b40[13]\b/.test(message)) auth={status:'unavailable',message:message.includes('401')
-        ? 'Codex authentication required. Verify this project’s DEV OpenAI key.'
-        : 'OpenAI rejected access for this project key.'};
+        ? 'Coding-agent authentication required. Verify the selected provider key in this project’s DEV secrets.'
+        : 'The selected provider rejected access for this project key.'};
       technical(id,/reconnecting|retry/i.test(message)?'Connection retry':'Execution error',message,'failed',at);
     } else if (['thread.started','turn.started','turn.completed'].includes(event.type)) {
       technical(id,event.type==='thread.started'?'Session started':event.type==='turn.started'?'Turn started':'Turn finished',

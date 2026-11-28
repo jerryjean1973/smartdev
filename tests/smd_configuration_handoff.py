@@ -115,14 +115,19 @@ def run():
             tenant.set_default(owner,"DEV","CANARY",tenant.TenantSecret(value="fixture-owner",version=0))
             tenant.set_default(owner,"DEV","OPENAI_API_KEY",tenant.TenantSecret(value="fixture-owner-codex",version=0))
             tenant.set_default(one,"DEV","OPENAI_API_KEY",tenant.TenantSecret(value="fixture-first-tenant-codex",version=0))
+            tenant.set_default(owner,"DEV","ANTHROPIC_API_KEY",tenant.TenantSecret(value="fixture-owner-claude-key",version=0))
+            tenant.set_default(one,"DEV","ANTHROPIC_API_KEY",tenant.TenantSecret(value="fixture-first-tenant-claude-key",version=0))
             with patch("codex_access.verify_provider_key") as verify:
                 assert api(client,key,"codex-models").json()=={"ready":True}
                 verify.assert_called_once_with("fixture-owner-codex")
+            with patch("codex_access.verify_anthropic_key") as verify:
+                assert api(client,key,"claude-models").json()=={"ready":True}
+                verify.assert_called_once_with("fixture-owner-claude-key")
             with database() as db:
                 db.execute("INSERT INTO project_runtime VALUES (%s,'DEV',%s)",(project,Jsonb({"APP_KEY":"APP_SOURCE","CANARY":"APP_SOURCE"})))
             vault["data/projects/"+str(project)+"/DEV/APP_SOURCE"]={"value":"fixture-project"}
             names=api(client,key,"tenant-bindings").json()["names"]
-            assert sorted(item["name"] for item in names)==["APP_KEY","CANARY","OPENAI_API_KEY"]
+            assert sorted(item["name"] for item in names)==["ANTHROPIC_API_KEY","APP_KEY","CANARY","OPENAI_API_KEY"]
             assert api(client,key,"tenant-secret",spec).json()["value"]=="fixture-owner"
             query=lambda name: json.dumps({"name":name,"environment":"DEV"}).encode()
             assert api(client,key,"tenant-secret",query("APP_KEY")).json()["value"]=="fixture-project"
@@ -144,6 +149,9 @@ def run():
             with patch("codex_access.verify_provider_key") as verify:
                 assert api(client,first,"codex-models").json()=={"ready":True}
                 verify.assert_called_once_with("fixture-first-tenant-codex")
+            with patch("codex_access.verify_anthropic_key") as verify:
+                assert api(client,first,"claude-models").json()=={"ready":True}
+                verify.assert_called_once_with("fixture-first-tenant-claude-key")
             assert api(client,first,"domains").json()["domains"]=={}
             assert api(client,first,"tenant-secret",spec).json()["value"]=="fixture-red"
             assert api(client,first,"tenant-secret",query("APP_KEY")).json()=={"present":False}
@@ -176,7 +184,7 @@ def run():
             assert api(client,keys[-1],"catalog").status_code==200
         with database() as db:
             assert db.execute("SELECT count(*) AS n FROM projects") .fetchone()["n"]==1
-            assert db.execute("SELECT count(*) AS n FROM smd_tenant_default_secret").fetchone()["n"]==5
+            assert db.execute("SELECT count(*) AS n FROM smd_tenant_default_secret").fetchone()["n"]==7
             assert "fixture-" not in str(db.execute("SELECT * FROM audit").fetchall())
         print("PASS verified owner / tenant A / tenant B / owner, independent portal access, unchanged project, revoked sessions, replay rejection, failed-cleanup rollback and tenant-specific canaries")
     finally:

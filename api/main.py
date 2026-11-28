@@ -115,7 +115,7 @@ async def protect(request: Request, call_next):
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
         return response
-    scoped = re.fullmatch(r"/workspace-memory/([a-f0-9-]{36})(?:/governance|/codex-access|/conversation|/preview-runtime|/mcp-bindings|/operator-task|/screenshots|/git-credential|/deployment-access)?", request.url.path)
+    scoped = re.fullmatch(r"/workspace-memory/([a-f0-9-]{36})(?:/governance|/codex-access|/agent-selection|/conversation|/preview-runtime|/mcp-bindings|/operator-task|/screenshots|/git-credential|/deployment-access)?", request.url.path)
     if "x-smartdev-acceptance" in request.headers and not (scoped and request.url.path.endswith("/conversation")):
         acceptance_scope = re.fullmatch(
             r"/projects/([a-f0-9-]{36})/(?:objectives|preview|development|dev-publishing)(?:/[^/]+){0,2}"
@@ -141,7 +141,7 @@ async def protect(request: Request, call_next):
     if re.fullmatch(r"/workspace-memory/[a-f0-9-]{36}/mcp/[a-z][a-z0-9_]{0,47}", request.url.path):
         return await call_next(request)
     if request.method == "POST" and re.fullmatch(
-        r"/workspace-memory/[a-f0-9-]{36}/codex/v1/responses", request.url.path
+        r"/workspace-memory/[a-f0-9-]{36}/(?:codex/v1/responses|claude/v1/messages(?:/count_tokens)?)", request.url.path
     ):
         return await call_next(request)
     if request.url.path == BRIDGE and request.method in ("OPTIONS", "POST"):

@@ -1,4 +1,4 @@
-<!doctype html><html lang="en" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content"><title>Project Codex</title><link rel="stylesheet" href="style.css"><script defer src="timeline.js"></script><script defer src="browser.js"></script><script defer src="chat.js"></script></head>
+<!doctype html><html lang="en" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content"><title>Project agent</title><link rel="stylesheet" href="style.css"><script defer src="timeline.js"></script><script defer src="browser.js"></script><script defer src="chat.js"></script></head>
 <body>
 <section id="checkpoint-history" hidden>
   <label>Starting version<select id="history-from"></select></label>
@@ -39,7 +39,7 @@
   </details>
 </header>
 <div class="chat-auth" id="auth-panel" hidden><span id="auth-message"></span>
-  <button id="reconnect-codex" hidden>Reconnect Codex</button><button id="retry-codex" hidden>Retry</button>
+  <button id="reconnect-codex" hidden>Reconnect agent</button><button id="retry-codex" hidden>Retry</button>
 </div>
 <main class="development-feed">
   <div id="output" aria-label="Development activity and conversation" tabindex="0"></div>
@@ -64,8 +64,8 @@
 </details>
 <div class="composer">
   <div id="reply-context" hidden><span></span><button type="button" aria-label="Cancel reply">×</button></div>
-  <label class="sr-only" for="prompt">Codex instructions</label>
-  <textarea id="prompt" rows="3" placeholder="Message Codex…"></textarea>
+  <label class="sr-only" for="prompt">Coding-agent instructions</label>
+  <textarea id="prompt" rows="3" placeholder="Message coding agent…"></textarea>
   <div class="toolbar">
     <input class="sr-only" type="file" id="upload" multiple><label class="attach" for="upload" title="Attach files"><span aria-hidden="true">＋</span><span class="sr-only">Attach files</span></label>
     <button id="cancel" hidden disabled aria-label="Stop execution" title="Stop execution">■</button>

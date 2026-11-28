@@ -13,6 +13,7 @@ type Provider = {
 };
 type Role = {scope:string; role:string; provider:string; model:string|null};
 type ModelCheck = {project_id:string|null; provider:string; model:string; status:string; usage:Record<string,number>|null; checked_at:string};
+type CodingAgent = {selected:'codex_cli'|'claude_code'; codex_cli:boolean; claude_code:boolean};
 type Activity = {id: number; provider: string; operation: string; actor: string; status: string; occurred_at: string};
 const label = (value: string) => value.toLowerCase().replace(/_/g, ' ');
 
@@ -27,7 +28,7 @@ export default function Integrations({onClose, projectId, repository}: {onClose:
   const dialog = useRef<HTMLDialogElement>(null);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [history, setHistory] = useState<Activity[]>([]);
-  const [settings, setSettings] = useState<{roles:Role[]; checks:ModelCheck[]}>({roles:[], checks:[]});
+  const [settings, setSettings] = useState<{roles:Role[]; checks:ModelCheck[]; coding_agent:CodingAgent|null}>({roles:[], checks:[], coding_agent:null});
   const [model, setModel] = useState('');
   const [role, setRole] = useState('prompter');
   const [projectScoped, setProjectScoped] = useState(false);
@@ -39,7 +40,8 @@ export default function Integrations({onClose, projectId, repository}: {onClose:
   const provider = providers.find(item => item.id === selection);
 
   async function refresh() {
-    const [directory, activity, ai] = await Promise.all([api<Provider[]>(), api<Activity[]>('/activity'), api<{roles:Role[];checks:ModelCheck[]}>('/ai/settings')]);
+    const settingPath='/ai/settings'+(projectId?'?project_id='+encodeURIComponent(projectId):'');
+    const [directory, activity, ai] = await Promise.all([api<Provider[]>(), api<Activity[]>('/activity'), api<{roles:Role[];checks:ModelCheck[];coding_agent:CodingAgent|null}>(settingPath)]);
     setSettings(ai);
     setProviders(directory);
     setHistory(activity);
@@ -84,6 +86,24 @@ export default function Integrations({onClose, projectId, repository}: {onClose:
       <button type="button" onClick={() => dialog.current?.close()}>Close</button>
     </header>
     {message && <p role="status">{message}</p>}
+    {projectId && settings.coding_agent && <section aria-label="Coding agent">
+      <h3>Coding agent</h3>
+      <p>The selected agent handles new Taskboard work, replies, direct prompts, and MCP requests. An in-flight execution keeps its admitted agent; switching providers starts a fresh session on the next prompt.</p>
+      <label>Coding agent<select value={settings.coding_agent.selected} disabled={busy}
+        onChange={event=>{
+          const selected=event.target.value as 'codex_cli'|'claude_code';
+          if (!settings.coding_agent?.[selected]) return;
+          void action(async()=>{
+            await api('/ai/roles/coder',{method:'PUT',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({provider:selected,model:null,project_id:projectId})});
+            return {message:(selected==='codex_cli'?'Codex':'Claude Code')+' will run new project work.'};
+          });
+        }}>
+        <option value="codex_cli" disabled={!settings.coding_agent.codex_cli}>Codex{settings.coding_agent.codex_cli?'':' · set DEV OPENAI_API_KEY first'}</option>
+        <option value="claude_code" disabled={!settings.coding_agent.claude_code}>Claude Code{settings.coding_agent.claude_code?'':' · set DEV ANTHROPIC_API_KEY first'}</option>
+      </select></label>
+      <p>Configuration · Codex {settings.coding_agent.codex_cli?'key present':'not configured'} · Claude Code {settings.coding_agent.claude_code?'key present':'not configured'}</p>
+    </section>}
     {provider ? <section>
       <button disabled={busy} onClick={() => {setSelection(''); setMessage('');}}>All integrations</button>
       <h3>{provider.name}</h3>
@@ -111,7 +131,7 @@ export default function Integrations({onClose, projectId, repository}: {onClose:
         }}>Disconnect</button>}
       {['openai','anthropic'].includes(provider.id) && <details>
         <summary>Inference and agent roles</summary>
-        <p>Coder · existing Codex CLI session</p>
+        <p>Coding agent · {settings.coding_agent?.selected==='claude_code'?'Claude Code':'Codex'} (selected per project above)</p>
         <label>Model<select value={model} onChange={event=>setModel(event.target.value)}>
           <option value="">Select a discovered model</option>
           {provider.connection.items?.map(item=><option key={item}>{item}</option>)}

@@ -53,10 +53,10 @@ function publicTranscript(text,project,{main=false,excluded=[],completeMessages=
     } else if (event.type==='smartdev.run_status' && statuses.has(event.state)) {
       output={type:event.type,state:event.state};
     } else if (event.type==='smartdev.auth' && event.status==='unavailable') {
-      output={type:event.type,status:'unavailable',message:'Codex could not connect to its model. Check this project’s Codex connection in Settings.'};
+      output={type:event.type,status:'unavailable',message:'The coding agent could not connect to its model. Check this project’s AI connection in Settings.'};
     } else if (event.type==='smartdev.result' && Number.isInteger(event.code)) {
       output={type:event.type,code:event.code===0?0:event.code===130?130:1,awaitingInput:event.awaitingInput===true,
-        error:event.code && event.code!==130?'Codex could not finish this run. Review the conversation and project settings before retrying.':undefined};
+        error:event.code && event.code!==130?'The coding agent could not finish this run. Review the conversation and project settings before retrying.':undefined};
     } else if (event.type==='smartdev.checkpoint') {
       output={type:'smartdev.progress',text:'Project changes saved'};
     } else if (item?.type==='command_execution' && typeof item.id==='string' &&

@@ -54,7 +54,7 @@ export default function Secrets({projectId}: {projectId: string}) {
       {entries.filter(row=>row.name.includes(filter.toUpperCase())).map(row=><article className="wb-task" key={row.name}>
         <p><strong>{row.name}</strong> · version {row.version} · ••••••••</p>
         <button onClick={()=>{setEditing(row);setAdding(false);}}>Rotate</button>
-        {row.name !== 'OPENAI_API_KEY' && <button onClick={()=>void action(async()=>{
+        {!['OPENAI_API_KEY','ANTHROPIC_API_KEY'].includes(row.name) && <button onClick={()=>void action(async()=>{
           const result=await call('/'+row.name+'/reveal','POST',{version:row.version});
           await navigator.clipboard.writeText(result.value);
           setMessage('Secret copied.');

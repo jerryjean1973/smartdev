@@ -116,10 +116,11 @@ def configured_marketplace_role(role, project=None):
 
 
 def provider_config(role, project=None):
-    if role != "coder":
-        assigned = configured_marketplace_role(role, project)
-        if assigned:
-            return assigned
+    assigned = configured_marketplace_role(role, project)
+    if assigned:
+        if role == "coder":
+            return ("anthropic", "") if assigned[0] == "claude_code" else ("openai", "")
+        return assigned
     default_provider, default_model = {
         "prompter":("anthropic","claude-sonnet-4-6"),
         "challenger":("openai","gpt-5.4"),

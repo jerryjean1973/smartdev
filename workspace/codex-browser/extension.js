@@ -58,7 +58,7 @@ function activate(context) {
       return;
     }
     const conversationDirectory = path.join(stateDirectory, createHash('sha256').update(folder).digest('hex'));
-    const view = vscode.window.createWebviewPanel('projectCodex', 'Codex', vscode.ViewColumn.Beside, {
+    const view = vscode.window.createWebviewPanel('projectCodex', 'Coding agent', vscode.ViewColumn.Beside, {
       enableScripts: true,
       retainContextWhenHidden: true,
       localResourceRoots: [context.extensionUri]
@@ -94,10 +94,13 @@ function activate(context) {
       if (message.type === 'new' && !busy) {
         try {
           const objective = String(message.objective || '');
-          if (idPattern.test(objective)) await fs.rm(path.join(conversationDirectory, objective), { force: true });
-          await send('output', 'New Codex conversation. The objective remains selected.');
+          if (idPattern.test(objective)) {
+            await fs.rm(path.join(conversationDirectory, objective), { force: true });
+            await fs.rm(path.join(conversationDirectory, objective+'.agent'), { force: true });
+          }
+          await send('output', 'New coding-agent conversation. The objective remains selected.');
         } catch {
-          await send('output', 'Could not reset the Codex conversation.');
+          await send('output', 'Could not reset the coding-agent conversation.');
         }
         return;
       }
@@ -123,7 +126,8 @@ function activate(context) {
         await saveState(conversationDirectory, 'active-objective', objective);
         await send('objective', objective);
         const session = await readState(conversationDirectory, objective);
-        if (session) args.push('--resume', session);
+        const sessionAgent = await readState(conversationDirectory, objective+'.agent') || 'codex_cli';
+        if (session) args.push('--resume', session, '--resume-agent', sessionAgent);
         if (message.criterion) args.push('--criterion', message.criterion);
 
         if (files.length) directory = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-input-'));
@@ -141,10 +145,14 @@ function activate(context) {
         args.push('--', message.prompt);
         child = spawn('codex-task', args, { cwd: folder, stdio: ['ignore', 'pipe', 'pipe'] });
         let nextSession;
+        let nextAgent='codex_cli';
         createInterface({ input: child.stdout }).on('line', line => {
           try {
             const event = JSON.parse(line);
-            if (event.type === 'thread.started' && idPattern.test(event.thread_id)) nextSession = event.thread_id;
+            if (event.type === 'thread.started' && idPattern.test(event.thread_id)) {
+              nextSession = event.thread_id;
+              nextAgent = event.agent === 'claude_code' ? 'claude_code' : 'codex_cli';
+            }
           } catch {}
           void send('output', line);
         });
@@ -155,9 +163,10 @@ function activate(context) {
         });
         if (nextSession) {
           await saveState(conversationDirectory, objective, nextSession);
+          await saveState(conversationDirectory, objective+'.agent', nextAgent);
           await context.workspaceState.update('pendingObjective', undefined);
         }
-        await send('output', 'Codex finished with exit status ' + code + '. Review changes in Source Control.');
+        await send('output', 'The coding agent finished with exit status ' + code + '. Review changes in Source Control.');
       } catch (error) {
         await send('output', error.message);
       } finally {
@@ -173,7 +182,7 @@ function activate(context) {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src blob:; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style nonce="${nonce}">body{padding:12px} textarea,input[type=text]{width:100%;box-sizing:border-box;margin:6px 0} #files img{max-width:120px;max-height:90px;vertical-align:middle} pre{white-space:pre-wrap;overflow-wrap:anywhere} #files li{margin:6px 0} button{margin-right:6px}</style>
-</head><body><label for="prompt">Codex instructions</label>
+</head><body><label for="prompt">Coding-agent instructions</label>
 <textarea id="prompt" rows="6" placeholder="Paste a screenshot here or drop files into this panel"></textarea>
 <label for="objective">Objective ID</label><input id="objective" type="text" placeholder="Leave blank to start a new objective">
 <label for="criterion">Acceptance criterion ID</label><input id="criterion" type="text" placeholder="Defaults to the next available criterion">

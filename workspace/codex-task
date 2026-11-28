@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Load project notes and track a Codex CLI execution."""
+"""Load project notes and track a managed coding-agent execution."""
 import argparse
 import fcntl
 import hashlib
@@ -31,18 +31,50 @@ APPROVAL_GUIDANCE = (
 )
 
 
+def selected_agent():
+    try:
+        agent = exchange({}, "/agent-selection")["agent"]
+    except (urllib.error.HTTPError, OSError, ValueError, KeyError):
+        raise RuntimeError("Coding-agent selection is unavailable.") from None
+    if agent not in {"codex_cli", "claude_code"}:
+        raise RuntimeError("The project has an unsupported coding-agent selection.")
+    return agent
+
+
+def resolve_agent(args):
+    configured = getattr(args, "agent", None)
+    if configured in {"codex", "codex_cli"}:
+        return "codex_cli"
+    if configured == "claude_code":
+        return configured
+    if not hasattr(args, "agent"):
+        return "codex_cli"
+    return selected_agent()
+
+
 def codex_preflight(lease):
     try:
         result = exchange(lease, "/codex-access", timeout=14)
-        return memory_settings()["url"] + "/codex/v1", result["bearer"]
+        agent = result["agent"]
+        if agent != lease.get("agent"):
+            raise RuntimeError("The project's coding agent changed before execution. Retry the task.")
+        suffix = "/codex/v1" if agent == "codex_cli" else "/claude"
+        return {"agent": agent, "url": memory_settings()["url"] + suffix, "bearer": result["bearer"]}
     except urllib.error.HTTPError as exc:
         try:
             detail = json.load(exc).get("detail")
         except (ValueError, AttributeError):
             detail = None
-        raise RuntimeError(detail if isinstance(detail, str) else "Codex authentication check failed.") from None
+        raise RuntimeError(detail if isinstance(detail, str) else "Coding-agent authentication check failed.") from None
     except (OSError, ValueError, KeyError):
-        raise RuntimeError("Codex authentication check is unavailable.") from None
+        raise RuntimeError("Coding-agent authentication check is unavailable.") from None
+
+
+def access_config(value, agent):
+    # Accept the former test seam while installed runners always receive the structured response.
+    if isinstance(value, tuple) and len(value) == 2:
+        return {"agent": agent, "url": value[0], "bearer": value[1]}
+    return value
 
 
 def compatible_resume(session):
@@ -175,7 +207,7 @@ def invoke(command, directory, environment, prompt, lease):
                             activity = {}
                         coordination(lease, "heartbeat", **activity)
                 except (RuntimeError, OSError, ValueError, KeyError):
-                    print("Assignment lease could not be renewed. Stopping Codex.", file=sys.stderr)
+                    print("Assignment lease could not be renewed. Stopping the coding agent.", file=sys.stderr)
                     signal_group(signal.SIGKILL)
                     return
 
@@ -209,22 +241,48 @@ def prepare_project_mcp(lease):
         raise OSError("SmartDev could not load the project MCP configuration.") from exc
 
 
-def apply_project_mcp(command, environment, configuration):
+def apply_project_mcp(command, environment, configuration, agent):
     ready = [binding for binding in configuration["bindings"] if binding.get("ready")]
     if not ready:
         return
-    environment["COMMAND_MCP_BEARER_TOKEN"] = configuration["bearer"]
     base = memory_settings()["url"].rstrip("/")
-    flags = []
-    for binding in ready:
-        name = binding["name"]
-        flags.extend(["-c", "mcp_servers." + name + ".url=" + json.dumps(base + "/mcp/" + name),
-                      "-c", "mcp_servers." + name + '.bearer_token_env_var="COMMAND_MCP_BEARER_TOKEN"'])
-    flags.extend(["-c", 'shell_environment_policy.exclude=["COMMAND_MCP_BEARER_TOKEN","COMMAND_CODEX_BEARER_TOKEN"]'])
-    command[2:2] = flags
+    if agent == "codex_cli":
+        environment["COMMAND_MCP_BEARER_TOKEN"] = configuration["bearer"]
+        flags = []
+        for binding in ready:
+            name = binding["name"]
+            flags.extend(["-c", "mcp_servers." + name + ".url=" + json.dumps(base + "/mcp/" + name),
+                          "-c", "mcp_servers." + name + '.bearer_token_env_var="COMMAND_MCP_BEARER_TOKEN"'])
+        flags.extend(["-c", 'shell_environment_policy.exclude=["COMMAND_MCP_BEARER_TOKEN","COMMAND_CODEX_BEARER_TOKEN"]'])
+        command[2:2] = flags
+        return
+    environment["SMARTDEV_MCP_LEASE"] = configuration["bearer"]
+    servers = {binding["name"]: {"type": "http", "url": base + "/mcp/" + binding["name"],
+        "headers": {"Authorization": "Bearer ${SMARTDEV_MCP_LEASE}"}} for binding in ready}
+    command.extend(["--mcp-config", json.dumps({"mcpServers": servers}, separators=(",", ":"))])
 
 
-def cli(args, mode, model_url, model_bearer):
+def cli(args, mode, access):
+    if access["agent"] == "claude_code":
+        session = compatible_resume(args.resume)
+        if getattr(args, "strict_resume", False) and getattr(args, "resume_agent", "codex_cli") != "claude_code":
+            raise ValueError("The original session belongs to Codex and cannot be resumed with Claude Code.")
+        if session and getattr(args, "resume_agent", "codex_cli") != "claude_code":
+            session = None
+        command = ["claude-task-adapter", "--mode", mode]
+        command.extend(["--resume", session] if session else ["--session-id", str(uuid4())])
+        environment = {key: value for key, value in os.environ.items()
+            if not key.startswith("COMMAND_MEMORY_") and key not in {
+                "CODER_AGENT_TOKEN", "CODER_SESSION_TOKEN", "GIT_ASKPASS", "GIT_SSH_COMMAND",
+                "OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY",
+                "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN",
+            }}
+        environment.update({
+            "ANTHROPIC_BASE_URL": access["url"], "ANTHROPIC_AUTH_TOKEN": access["bearer"],
+            "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST": "1", "DISABLE_TELEMETRY": "1",
+        })
+        return command, environment
+    model_url, model_bearer = access["url"], access["bearer"]
     command = [
         "codex", "exec", "--sandbox", mode,
         "-c", 'model_provider="smartdev"',
@@ -242,6 +300,10 @@ def cli(args, mode, model_url, model_bearer):
     if args.json:
         command.append("--json")
     resume = compatible_resume(args.resume)
+    if getattr(args, "strict_resume", False) and getattr(args, "resume_agent", "codex_cli") != "codex_cli":
+        raise ValueError("The original session belongs to Claude Code and cannot be resumed with Codex.")
+    if resume and getattr(args, "resume_agent", "codex_cli") != "codex_cli":
+        resume = None
     if getattr(args,"strict_resume",False) and (not resume or resume != args.resume):
         raise ValueError("The original Codex session cannot be resumed with this provider.")
     if resume:
@@ -264,7 +326,12 @@ def cli(args, mode, model_url, model_bearer):
 def run_conversation(args, directory):
     branch=git(directory, "symbolic-ref", "--short", "HEAD") or "detached"
     head=git(directory, "rev-parse", "--verify", "HEAD")
-    lease={"conversation_id":str(args.conversation), "execution_id":str(getattr(args,"conversation_execution",None) or uuid4())}
+    try:
+        args.agent = resolve_agent(args)
+    except RuntimeError as exc:
+        sys.exit(str(exc))
+    lease={"conversation_id":str(args.conversation), "execution_id":str(getattr(args,"conversation_execution",None) or uuid4()),
+           "agent":args.agent}
     try:
         resuming=getattr(args,"strict_resume",False)
         admission={**lease,"action":"resume_run" if resuming else "start_run","mode":"workspace-write"}
@@ -286,7 +353,7 @@ def run_conversation(args, directory):
     try:
         before=dirty_files(directory)
         try:
-            model_url, model_bearer=codex_preflight(lease)
+            access=access_config(codex_preflight(lease),args.agent)
         except RuntimeError as exc:
             print(json.dumps({"type":"smartdev.auth","status":"unavailable","message":str(exc)}),file=sys.stderr)
             code=78
@@ -313,8 +380,8 @@ def run_conversation(args, directory):
         if prior_question:
             prompt+="\n"+json.dumps({"previous_question":prior_question,
                 "interpret_instruction_as":"The user's answer to the previous question."},ensure_ascii=False)
-        command,environment=cli(args,"workspace-write",model_url,model_bearer)
-        apply_project_mcp(command,environment,mcp)
+        command,environment=cli(args,"workspace-write",access)
+        apply_project_mcp(command,environment,mcp,args.agent)
         with NamedTemporaryFile(mode="w",encoding="utf-8") as context:
             json.dump({"directory":str(directory),"branch":branch,"mode":"workspace-write","recovery":rules,
                 "authorization":{**lease,"action":"authorize_run"},"conversation":True},context)
@@ -361,10 +428,11 @@ def main():
     parser.add_argument("--conversation-execution", type=UUID)
     parser.add_argument("--reply-question")
     parser.add_argument("--strict-resume",action="store_true")
+    parser.add_argument("--resume-agent", choices=("codex_cli","claude_code"), default="codex_cli")
     parser.add_argument("--new-objective", action="store_true", help="Create the supplied objective ID if needed")
     parser.add_argument("--criterion")
     parser.add_argument("--project-context", default="[]")
-    parser.add_argument("--agent", default="codex")
+    parser.add_argument("--agent", choices=("codex_cli","claude_code"))
     parser.add_argument("--image", action="append", default=[])
     parser.add_argument("--file", action="append", default=[])
     parser.add_argument("--json", action="store_true")
@@ -386,7 +454,7 @@ def main():
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            sys.exit("This worktree already has a managed Codex task.")
+            sys.exit("This worktree already has a managed coding-agent task.")
         if args.conversation:
             return run_conversation(args, directory)
         return run(args, directory, root.parent)
@@ -396,9 +464,13 @@ def run(args, directory, project_root):
     branch = git(directory, "symbolic-ref", "--short", "HEAD") or "detached"
     before = dirty_files(directory)
     head_before = git(directory, "rev-parse", "--verify", "HEAD")
+    try:
+        args.agent = resolve_agent(args)
+    except RuntimeError as exc:
+        sys.exit(str(exc))
     payload = {"terms": args.terms, "include_shared": args.include_shared, "execution_id": str(uuid4()), "branch": branch, "head": head_before}
     objective_id = args.objective or uuid4()
-    lease = {"objective_id": str(objective_id), "execution_id": payload["execution_id"]}
+    lease = {"objective_id": str(objective_id), "execution_id": payload["execution_id"], "agent":args.agent}
     try:
         original = args.task if args.new_objective else None
         prepared = coordination(lease, "prepare", original_request=original, explicit_task=args.new_objective)
@@ -438,14 +510,15 @@ def run(args, directory, project_root):
         notes = current_notes(directory, exchange(payload))
         recorded = True
         try:
-            model_url, model_bearer = codex_preflight(lease)
+            access = access_config(codex_preflight(lease),args.agent)
         except RuntimeError as exc:
             code = 78
             print(json.dumps({"type": "smartdev.auth", "status": "unavailable", "message": str(exc)}),
                   file=sys.stderr, flush=True)
             return code
-        print(json.dumps({"type": "smartdev.auth", "status": "connected",
-                          "message": "OpenAI authentication verified for this task."}), file=sys.stderr, flush=True)
+        print(json.dumps({"type": "smartdev.auth", "status": "connected", "agent":args.agent,
+                          "message": ("OpenAI authentication verified for this task." if args.agent == "codex_cli"
+                                      else "Anthropic authentication verified for this task.")}), file=sys.stderr, flush=True)
         contract = decision["contract"]
         fields = ("id", "original_request", "expected_outcome", "criteria", "scope", "constraints",
                   "dependencies", "version")
@@ -468,7 +541,7 @@ def run(args, directory, project_root):
             "Use concise user-facing updates for meaningful findings, decisions and results. "
             "Do not narrate routine commands. If the task needs user input, end with a separate Question: line "
             "that asks for the specific decision, and stop before making that decision. "
-            "Before editing, evaluate the native skills advertised by Codex and read only matching SKILL.md files. "
+            "Before editing, evaluate the native skills available to the selected coding agent and read only matching SKILL.md files. "
             "If none fits, follow project standards. When a recurring gap is in scope, draft a native project "
             "skill in .agents/skills/<name>/SKILL.md with name and description frontmatter, verify the workflow "
             "against an independent example, and include the skill in the task's normal Git review. "
@@ -480,8 +553,8 @@ def run(args, directory, project_root):
         mcp=prepare_project_mcp(lease)
         prompt += "\n" + json.dumps({"project_mcp":mcp["bindings"]})
         prompt += prompt_context(directory, project_root, args.task)
-        command, environment = cli(args, mode, model_url, model_bearer)
-        apply_project_mcp(command,environment,mcp)
+        command, environment = cli(args, mode, access)
+        apply_project_mcp(command,environment,mcp,args.agent)
         recovery = (
             "Resume the accepted objective and assigned criterion. Do not reopen verified work.\n"
             + json.dumps({"objective": definition, "progress": progress, "criterion": decision["criterion"]},
@@ -502,7 +575,7 @@ def run(args, directory, project_root):
     except KeyboardInterrupt:
         code = 130
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as exc:
-        print(f"Codex task could not run ({type(exc).__name__}).", file=sys.stderr)
+        print(f"Coding-agent task could not run ({type(exc).__name__}).", file=sys.stderr)
     finally:
         head = git(directory, "rev-parse", "--verify", "HEAD")
         final_branch = git(directory, "symbolic-ref", "--short", "HEAD") or "detached"

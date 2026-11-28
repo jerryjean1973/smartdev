@@ -165,7 +165,7 @@ class ModelCheck(BaseModel):
 
 
 class RoleAssignment(BaseModel):
-    provider: Literal["openai", "anthropic", "codex_cli"]
+    provider: Literal["openai", "anthropic", "codex_cli", "claude_code"]
     model: str | None = Field(default=None, max_length=200)
     project_id: UUID | None = None
 
@@ -182,21 +182,33 @@ def check_model(db, provider, model):
 
 
 @router.get("/ai/settings")
-def ai_settings():
+def ai_settings(project_id: UUID | None = None):
+    from codex_access import agent_configured, selected_agent
     with database() as db:
         return {
             "roles": db.execute("SELECT scope,role,provider,model FROM integration_ai_role ORDER BY scope,role").fetchall(),
             "checks": db.execute("""SELECT project_id,provider,model,status,usage,checked_at
                 FROM integration_ai_check ORDER BY checked_at DESC LIMIT 40""").fetchall(),
+            "coding_agent": ({
+                "selected": selected_agent(project_id),
+                "codex_cli": agent_configured(project_id, "codex_cli"),
+                "claude_code": agent_configured(project_id, "claude_code"),
+            } if project_id else None),
         }
 
 
 @router.put("/ai/roles/{role}")
 def set_role(role: Literal["prompter", "challenger", "coder", "reviewer"], body: RoleAssignment):
     if role == "coder":
-        if body.provider != "codex_cli" or body.model is not None:
-            raise HTTPException(422, "The coder uses the existing Codex CLI session.")
-    elif body.provider == "codex_cli" or not body.model:
+        if body.provider not in {"codex_cli", "claude_code"} or body.model is not None:
+            raise HTTPException(422, "Select Codex or Claude Code for the coding agent.")
+        if not body.project_id:
+            raise HTTPException(422, "Select a project before changing its coding agent.")
+        from codex_access import agent_configured
+        if not agent_configured(body.project_id, body.provider):
+            name = "OPENAI_API_KEY" if body.provider == "codex_cli" else "ANTHROPIC_API_KEY"
+            raise HTTPException(409, f"Set and verify {name} in the project's DEV secrets first.")
+    elif body.provider in {"codex_cli", "claude_code"} or not body.model:
         raise HTTPException(422, "Select a separate API provider and model for this role.")
     with database() as db:
         check_project(db, body.project_id)

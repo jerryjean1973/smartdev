@@ -33,9 +33,9 @@
     section('Native MCP configuration', [
       ...sources('codex_config'),
       ...(index.mcp || []).map(server => server.name + (server.enabled ? ' · Enabled' : ' · Disabled')),
-    ], index.mcp === null ? 'Codex MCP inventory unavailable' : 'No server configuration reported');
+    ], index.mcp === null ? 'Coding-agent MCP inventory unavailable' : 'No server configuration reported');
     const note = document.createElement('p');
-    note.textContent = 'Codex verifies connected tools during execution.';
+    note.textContent = 'The selected coding agent verifies connected tools during execution.';
     output.append(note);
     if (index.stale.length) section('Changed or removed since the previous refresh', index.stale);
   } catch {

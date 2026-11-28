@@ -1,5 +1,6 @@
 import importlib.machinery
 import importlib.util
+import json
 import os
 import sys
 import unittest
@@ -183,6 +184,29 @@ class FoundationTests(unittest.TestCase):
         self.assertEqual(result["exit_code"], 0)
         self.assertFalse(result["include_shared"])
         self.assertNotIn("continue task", str(result))
+
+    def test_claude_code_uses_managed_gateway_without_raw_provider_keys(self):
+        args = Namespace(resume=None, strict_resume=False, resume_agent="claude_code", image=[])
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY":"must-not-leak", "CLAUDE_CODE_OAUTH_TOKEN":"must-not-leak"}):
+            command, environment = wrapper.cli(args, "workspace-write", {
+                "agent":"claude_code", "url":"https://project.example/claude", "bearer":"leased-bearer",
+            })
+        self.assertEqual(command[:3], ["claude-task-adapter","--mode","workspace-write"])
+        self.assertIn("--session-id", command)
+        self.assertEqual(environment["ANTHROPIC_BASE_URL"], "https://project.example/claude")
+        self.assertEqual(environment["ANTHROPIC_AUTH_TOKEN"], "leased-bearer")
+        self.assertNotIn("ANTHROPIC_API_KEY", environment)
+        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", environment)
+
+    def test_claude_mcp_uses_environment_capability_not_command_line_secret(self):
+        command=["claude-task-adapter","--mode","workspace-write"]
+        environment={}
+        with patch.object(wrapper,"memory_settings",return_value={"url":"https://project.example/api"}):
+            wrapper.apply_project_mcp(command,environment,{"bearer":"mcp-secret","bindings":[{"name":"bripe","ready":True}]},"claude_code")
+        self.assertEqual(environment["SMARTDEV_MCP_LEASE"],"mcp-secret")
+        config=json.loads(command[-1])
+        self.assertEqual(config["mcpServers"]["bripe"]["headers"]["Authorization"],"Bearer ${SMARTDEV_MCP_LEASE}")
+        self.assertNotIn("mcp-secret"," ".join(command))
 
 
 

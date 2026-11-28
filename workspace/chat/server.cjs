@@ -194,7 +194,7 @@ async function start(tree, data, chat, message, direct, queuedExecution) {
     original_request:data.prompt,name:data.title});
   const runKey=objective ? tree : 'chat:'+chat.id;
   if (!objective && [...active.values()].some(run=>!run.objective)) throw Error('A direct execution is already using the project checkout.');
-  if (active.has(runKey)) throw new Error(objective?'This task already has an active execution.':'Codex is already responding in this conversation.');
+  if (active.has(runKey)) throw new Error(objective?'This task already has an active execution.':'The coding agent is already responding in this conversation.');
 
   const execution=data.resumeExecution || queuedExecution || direct?.executionId || randomUUID();
   const record = {objective, execution, conversationId:chat.id, state:'thinking', child: null, cancelled: false};
@@ -212,8 +212,9 @@ async function start(tree, data, chat, message, direct, queuedExecution) {
     if (data.criterion && data.objective) args.push('--criterion',data.criterion);
     if (!objective && pendingQuestion) args.push('--reply-question',pendingQuestion.question);
     const previous = data.resumeThread || (await read(names.session)).trim();
-    if ((data.resumeExecution || data.strictResume) && !ids.test(previous)) throw Error('The original Codex thread cannot be confirmed.');
-    if (ids.test(previous)) args.push('--resume',previous);
+    const previousAgent = (await read(names.session+'.agent')).trim() || 'codex_cli';
+    if ((data.resumeExecution || data.strictResume) && !ids.test(previous)) throw Error('The original coding-agent thread cannot be confirmed.');
+    if (ids.test(previous)) args.push('--resume',previous,'--resume-agent',previousAgent);
     if (data.resumeExecution || data.strictResume) args.push('--strict-resume');
     let threadId=ids.test(previous) ? previous : undefined;
     const attached = attachments.length
@@ -276,8 +277,9 @@ async function start(tree, data, chat, message, direct, queuedExecution) {
           threadId=event.thread_id;
           writes=writes.then(async()=>{
             await fs.writeFile(names.session,event.thread_id,{mode:0o600});
+            await fs.writeFile(names.session+'.agent',event.agent==='claude_code'?'claude_code':'codex_cli',{mode:0o600});
             await pointer({action:'activity',conversation_id:chat.id,task_id:objective,thread_id:event.thread_id});
-          }).catch(error=>console.error('Could not persist Codex session:',error.message));
+          }).catch(error=>console.error('Could not persist coding-agent session:',error.message));
         }
         if (event.item?.type==='reasoning') return;
         if (event.type==='item.started' && event.item?.type==='command_execution') {
@@ -321,7 +323,7 @@ async function start(tree, data, chat, message, direct, queuedExecution) {
         const item=state.items.find(item=>item.id===queueItem);
         if (item) {
           item.status=code===0 ? (question?'waiting':'completed') : (decision?.status==='pending'?'waiting':'failed');
-          if (code!==0) item.error=redact(failure || 'Codex exited with status '+(code ?? 1)+'. Review the execution details.');
+          if (code!==0) item.error=redact(failure || 'The coding agent exited with status '+(code ?? 1)+'. Review the execution details.');
           else delete item.error;
         }
         const completedDirect=direct ? execution : data.retainedExecutionId;
@@ -507,7 +509,7 @@ async function resumeMain(chat,state,decision,instruction,messageId,retained) {
   validateInstruction(instruction);
   if ([...active.values()].some(run=>!run.objective)) throw Error('Wait for the current Main turn to release the checkout.');
   const thread=await originalThread(chat,decision);
-  if (!thread) throw Error('The original Codex thread cannot be confirmed. The question and answer are still retained.');
+  if (!thread) throw Error('The original coding-agent thread cannot be confirmed. The question and answer are still retained.');
   const executionId=decision.executionId || decision.id;
   decision.status='answering';
   decision.answerMessage=messageId;
@@ -669,7 +671,7 @@ async function changeWorkflow(data) {
     const decision=state.decisions.find(row=>presentation.reference(project,row.id)===data.id && row.conversationId===chat.id && row.status==='pending');
     if (!decision) throw Error('This request is no longer pending.');
     if ([...active.values()].some(run=>decision.objective ? run.objective===decision.objective :
-        !run.objective && run.conversationId===chat.id)) throw Error('Wait for Codex to finish its current turn.');
+        !run.objective && run.conversationId===chat.id)) throw Error('Wait for the coding agent to finish its current turn.');
     if (!decision.objective) {
       await resumeMain(chat,state,decision,{prompt:data.description,files:data.files || []},randomUUID());
       return state;
@@ -1059,7 +1061,7 @@ async function main() {
               const replyable=pending && !pending.answerMessage && ids.test(pending.threadId || '');
               if (data.waitingReply && !replyable) {
                 result={conflict:pending
-                  ? 'The original Codex thread is unavailable. Use the send-message tool to continue the task.'
+                  ? 'The original coding-agent thread is unavailable. Use the send-message tool to continue the task.'
                   : 'This task is not waiting for a reply. Use the send-message tool to continue the task.'};
               } else if (!data.waitingReply && replyable) {
                 result={conflict:'This task is waiting for your reply. Use the waiting-task reply tool.'};
